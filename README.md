@@ -146,3 +146,30 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   ]
 }
 ```
+
+---
+
+## 阶段四企业级支柱能力 (Phase 4 Evolution)
+
+### 支柱 1：智能两级缓存引擎 (`CacheEngine`)
+- **L1 精准 Hash 缓存**：基于 SHA-256 对 `model`、`messages` 与 `temperature` 标准化序列化生成指纹，亚毫秒级命中响应（`< 0.5ms`），响应头携带 `X-Cache-Lookup: HIT`，**0 Token 消耗**。
+- **L2 语义相似度缓存**：基于 Jaccard 分词重合度计算语义相似度（阈值默认 0.88 可配），针对同义表达命中缓存。
+- **流式 SSE 模拟吐字回放**：流式调用命中缓存时，由 Java 21 虚拟线程平滑分批吐出 SSE chunk 并正常发送 `[DONE]`，保持前端打字机极致体验。
+
+### 支柱 2：租户运营与监控大盘 REST 控制面 (`AdminController`)
+- **独立管理员鉴权**：通过 `X-Admin-Key` 独立鉴权，与业务租户 `X-API-Key` 完全隔离。
+- **租户生命周期管理**：
+  - `GET /v1/admin/tenants`：租户列表查询；
+  - `POST /v1/admin/tenants`：注册新租户或更新配额及 QPS；
+  - `PUT /v1/admin/tenants/{id}/quota`：充值配额与重置用量；
+  - `PATCH /v1/admin/tenants/{id}/status`：切换租户启用/停用状态。
+- **运营大盘总览 (`GET /v1/admin/analytics/overview`)**：
+  - 汇总总租户数、累计总请求量、成功率、违规拦截率（400/401/403/429）、总计使用 Token、**缓存节省 Token 数量** 与平均耗时。
+
+### 支柱 3：端到端 Agent Tool Calling 自动调度编排沙箱 (`AgentToolOrchestrator`)
+- **OpenAI 兼容工具协议**：全面兼容 `tools`、`tool_calls` 与 `tool_call_id`。
+- **ReAct 多轮自主调度闭环**：当模型返回 `tool_calls` 时，编排器自动执行沙箱工具、将执行结果回填为 `role: tool` 消息并重新发起推理，直至模型产出最终文本或达到最大轮次（默认 5 轮）。
+- **工具安全沙箱双重守门 (`ToolActionGatekeeper`)**：
+  - **指令安全评级**：阻断破坏性指令（如 `rm -rf`、`DROP TABLE`）；
+  - **跨租户隔离守门**：阻断任何越权携带其他租户标识的工具调用。
+

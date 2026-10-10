@@ -10,8 +10,16 @@ public class TenantSecurityContext {
         CURRENT_TENANT.set(tenant);
     }
 
+    public static void setCurrentTenant(TenantEntity tenant) {
+        setTenant(tenant);
+    }
+
     public static TenantEntity getTenant() {
         return CURRENT_TENANT.get();
+    }
+
+    public static TenantEntity getCurrentTenant() {
+        return getTenant();
     }
 
     public static void clear() {

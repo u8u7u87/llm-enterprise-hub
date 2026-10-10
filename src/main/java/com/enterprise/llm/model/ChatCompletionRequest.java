@@ -12,11 +12,16 @@ public record ChatCompletionRequest(
         String model,
         List<ChatMessage> messages,
         Boolean stream,
-        Double temperature
+        Double temperature,
+        Integer maxTokens
 ) {
     public ChatCompletionRequest {
         if (stream == null) {
             stream = false;
         }
+    }
+
+    public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature) {
+        this(model, messages, stream, temperature, null);
     }
 }

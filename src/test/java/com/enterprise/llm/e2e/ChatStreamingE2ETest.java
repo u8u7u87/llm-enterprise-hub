@@ -23,7 +23,7 @@ import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {"spring.main.allow-bean-definition-overriding=true"})
 class ChatStreamingE2ETest {
 
     private static MockWebServer mockLlmServer;
@@ -34,13 +34,22 @@ class ChatStreamingE2ETest {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    @Autowired
+    private com.enterprise.llm.tenant.TenantService tenantService;
+
     @TestConfiguration
     static class TestConfig {
-        @Bean
+        @Bean(name = "primaryLlmClient")
         @Primary
-        public LlmClient testLlmClient() {
+        public LlmClient primaryTestLlmClient() {
             String baseUrl = mockLlmServer.url("/").toString();
             return new OpenAiCompatibleLlmClient(baseUrl, "e2e-test-key");
+        }
+
+        @Bean(name = "fallbackLlmClient")
+        public LlmClient fallbackTestLlmClient() {
+            String baseUrl = mockLlmServer.url("/").toString();
+            return new OpenAiCompatibleLlmClient(baseUrl, "e2e-fallback-key");
         }
     }
 
@@ -57,6 +66,10 @@ class ChatStreamingE2ETest {
 
     @Test
     void shouldExecuteSyncCompletionEndToEnd() {
+        tenantService.registerTenant(new com.enterprise.llm.tenant.TenantEntity(
+                "e2e-tenant-1", "E2E Corp", "sk-e2e-valid-key", 20, 100000, 0, true
+        ));
+
         String upstreamResponse = """
                 {
                   "id": "e2e-sync-1",
@@ -92,6 +105,7 @@ class ChatStreamingE2ETest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-API-Key", "sk-e2e-valid-key");
         HttpEntity<String> entity = new HttpEntity<>(requestJson, headers);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
@@ -107,6 +121,10 @@ class ChatStreamingE2ETest {
 
     @Test
     void shouldExecuteStreamingCompletionEndToEnd() {
+        tenantService.registerTenant(new com.enterprise.llm.tenant.TenantEntity(
+                "e2e-tenant-1", "E2E Corp", "sk-e2e-valid-key", 20, 100000, 0, true
+        ));
+
         String ssePayload = """
                 data: {"id":"e2e-1","model":"deepseek-chat","choices":[{"index":0,"delta":{"content":"Hi "}}]}
                 
@@ -130,6 +148,7 @@ class ChatStreamingE2ETest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-API-Key", "sk-e2e-valid-key");
         HttpEntity<String> entity = new HttpEntity<>(requestJson, headers);
 
         ResponseEntity<String> response = restTemplate.postForEntity(

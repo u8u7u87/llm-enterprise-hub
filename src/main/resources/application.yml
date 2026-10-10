@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: llm-enterprise-hub
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8080
+
+llm:
+  provider:
+    base-url: "http://localhost:8000"
+    api-key: "dummy-key"
+    model: "default-model"
+    timeout-seconds: 60

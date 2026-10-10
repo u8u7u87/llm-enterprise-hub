@@ -1,34 +1,39 @@
 package com.enterprise.llm.guard;
 
+import com.enterprise.llm.guard.tool.PropertiesToolPolicyProvider;
+import com.enterprise.llm.guard.tool.ToolPolicyProperties;
+import com.enterprise.llm.guard.tool.ToolPolicyProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
 @Service
 public class ToolActionGatekeeper {
 
-    private static final List<Pattern> DANGEROUS_PATTERNS = List.of(
-            Pattern.compile("(?i)rm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|--recursive|-[a-zA-Z]*f[a-zA-Z]*r)"),
-            Pattern.compile("(?i)drop\\s+table"),
-            Pattern.compile("(?i)drop\\s+database"),
-            Pattern.compile("(?i)truncate\\s+table"),
-            Pattern.compile("(?i)truncate\\s+[a-zA-Z0-9_]+"),
-            Pattern.compile("(?i)format\\s+[a-z]:"),
-            Pattern.compile("(?i)mkfs(\\.[a-z0-9]+)?\\s+"),
-            Pattern.compile("(?i)shutdown\\s+-h"),
-            Pattern.compile("(?i)reboot"),
-            Pattern.compile("(?i)kill\\s+-9\\s+1\\b")
-    );
+    private final ToolPolicyProvider policyProvider;
+    private final List<Pattern> dynamicDangerPatterns = new CopyOnWriteArrayList<>();
 
-    private static final Set<String> TENANT_KEYS = Set.of(
-            "tenant_id", "tenantid", "tenant", "org_id", "orgid", "account_id", "accountid"
-    );
+    @Autowired
+    public ToolActionGatekeeper(ToolPolicyProvider policyProvider) {
+        this.policyProvider = policyProvider;
+    }
+
+    public ToolActionGatekeeper() {
+        this(new PropertiesToolPolicyProvider(new ToolPolicyProperties()));
+    }
+
+    public void addDangerPattern(String regex) {
+        if (regex != null && !regex.isBlank()) {
+            dynamicDangerPatterns.add(Pattern.compile(regex));
+        }
+    }
 
     public void validateAction(ToolAction action, String currentTenantId) {
-        if (action == null) {
+        if (action == null || !policyProvider.isEnabled()) {
             return;
         }
 
@@ -42,10 +47,11 @@ public class ToolActionGatekeeper {
         }
 
         // 2. Cross-tenant isolation check
-        if (currentTenantId != null && action.arguments() != null) {
+        if (policyProvider.isTenantIsolationEnabled() && currentTenantId != null && action.arguments() != null) {
+            List<String> identityFields = policyProvider.getTenantIdentityFields();
             for (Map.Entry<String, Object> entry : action.arguments().entrySet()) {
                 String normalizedKey = entry.getKey().toLowerCase().replace("-", "_");
-                if (TENANT_KEYS.contains(normalizedKey) && entry.getValue() != null) {
+                if (identityFields.contains(normalizedKey) && entry.getValue() != null) {
                     String specifiedTenantId = String.valueOf(entry.getValue());
                     if (!currentTenantId.equals(specifiedTenantId)) {
                         throw new CrossTenantViolationException(
@@ -71,9 +77,14 @@ public class ToolActionGatekeeper {
         if (text == null || text.isBlank()) {
             return;
         }
-        for (Pattern pattern : DANGEROUS_PATTERNS) {
+        for (Pattern pattern : policyProvider.getDangerPatterns()) {
             if (pattern.matcher(text).find()) {
-                throw new SecurityViolationException("Dangerous tool execution attempt blocked: " + pattern.pattern());
+                throw new SecurityViolationException("Dangerous tool execution attempt blocked by policy rule: " + pattern.pattern());
+            }
+        }
+        for (Pattern pattern : dynamicDangerPatterns) {
+            if (pattern.matcher(text).find()) {
+                throw new SecurityViolationException("Dangerous tool execution attempt blocked by dynamic rule: " + pattern.pattern());
             }
         }
     }

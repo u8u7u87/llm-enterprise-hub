@@ -66,4 +66,38 @@ class OutputGuardrailServiceTest {
 
         assertThat(sanitized).isEqualTo(output);
     }
+
+    @Test
+    void shouldSupportCustomDynamicDlpRule() {
+        guardrailService.addDynamicRule(new com.enterprise.llm.guard.dlp.DlpRule(
+                "order_sn",
+                "Order Serial Number",
+                "ORD-[0-9]{8}",
+                com.enterprise.llm.guard.dlp.DlpMaskType.REPLACE_TAG,
+                "[REDACTED_ORDER_SN]",
+                true
+        ));
+
+        String output = "Order detail for ORD-20261010 created.";
+        String sanitized = guardrailService.sanitize(output);
+
+        assertThat(sanitized).contains("[REDACTED_ORDER_SN]");
+        assertThat(sanitized).doesNotContain("ORD-20261010");
+    }
+
+    @Test
+    void shouldThrowSecurityViolationWhenRuleMaskTypeIsBlock() {
+        guardrailService.addDynamicRule(new com.enterprise.llm.guard.dlp.DlpRule(
+                "confidential_leak",
+                "Top Secret",
+                "(?i)internal_payroll_dump",
+                com.enterprise.llm.guard.dlp.DlpMaskType.BLOCK,
+                "",
+                true
+        ));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                guardrailService.sanitize("Here is the internal_payroll_dump file")
+        ).isInstanceOf(SecurityViolationException.class);
+    }
 }

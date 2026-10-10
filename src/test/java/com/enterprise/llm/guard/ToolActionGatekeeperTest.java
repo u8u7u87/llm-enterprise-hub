@@ -76,4 +76,18 @@ class ToolActionGatekeeperTest {
                 .isInstanceOf(SecurityViolationException.class)
                 .hasMessageContaining("Dangerous tool execution attempt blocked");
     }
+
+    @Test
+    void shouldBlockDynamicallyAddedDangerPattern() {
+        gatekeeper.addDangerPattern("(?i)python\\s+-c\\s+.*socket");
+
+        ToolAction dynamicDangerous = new ToolAction(
+                "run_script",
+                Map.of("cmd", "python -c 'import socket; s=socket.socket()'")
+        );
+
+        assertThatThrownBy(() -> gatekeeper.validateAction(dynamicDangerous, "tenant-alpha"))
+                .isInstanceOf(SecurityViolationException.class)
+                .hasMessageContaining("Dangerous tool execution attempt blocked by dynamic rule");
+    }
 }

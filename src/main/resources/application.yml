@@ -21,3 +21,60 @@ llm:
     api-key: "ollama"
     model: "qwen2.5:0.5b"
     timeout-seconds: 60
+
+security:
+  dlp:
+    enabled: true
+    rules:
+      - id: jwt
+        name: "JWT Authentication Token"
+        pattern: "\\bey[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+\\b"
+        mask-type: REPLACE_TAG
+        replacement: "[REDACTED_JWT]"
+        enabled: true
+      - id: openai_key
+        name: "OpenAI API Key"
+        pattern: "\\bsk-[a-zA-Z0-9_-]{20,}\\b"
+        mask-type: REPLACE_TAG
+        replacement: "[REDACTED_API_KEY]"
+        enabled: true
+      - id: aws_key
+        name: "AWS Access Key ID"
+        pattern: "\\bAKIA[0-9A-Z]{16}\\b"
+        mask-type: REPLACE_TAG
+        replacement: "[REDACTED_AWS_KEY]"
+        enabled: true
+      - id: phone
+        name: "Chinese 11-digit Mobile Phone"
+        pattern: "(?<!\\d)1[3-9]\\d{9}(?!\\d)"
+        mask-type: REPLACE_TAG
+        replacement: "[REDACTED_PHONE]"
+        enabled: true
+      - id: email
+        name: "Email Address"
+        pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+        mask-type: REPLACE_TAG
+        replacement: "[REDACTED_EMAIL]"
+        enabled: true
+  tools:
+    enabled: true
+    tenant-isolation-enabled: true
+    tenant-identity-fields:
+      - "tenant_id"
+      - "tenantid"
+      - "tenant"
+      - "org_id"
+      - "orgid"
+      - "account_id"
+      - "accountid"
+    danger-patterns:
+      - "(?i)rm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|--recursive|-[a-zA-Z]*f[a-zA-Z]*r)"
+      - "(?i)drop\\s+table"
+      - "(?i)drop\\s+database"
+      - "(?i)truncate\\s+table"
+      - "(?i)truncate\\s+[a-zA-Z0-9_]+"
+      - "(?i)format\\s+[a-z]:"
+      - "(?i)mkfs(\\.[a-z0-9]+)?\\s+"
+      - "(?i)shutdown\\s+-h"
+      - "(?i)reboot"
+      - "(?i)kill\\s+-9\\s+1\\b"

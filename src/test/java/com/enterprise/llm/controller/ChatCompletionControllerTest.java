@@ -46,6 +46,9 @@ class ChatCompletionControllerTest {
     @MockBean
     private com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
 
+    @MockBean
+    private com.enterprise.llm.guard.PromptGuardrailService promptGuardrailService;
+
     @Test
     void shouldReturnSyncChatCompletion() throws Exception {
         ChatCompletionResponse dummyResponse = new ChatCompletionResponse(
@@ -56,6 +59,7 @@ class ChatCompletionControllerTest {
         Mockito.when(tenantService.authenticateApiKey(any()))
                 .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+        Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
         Mockito.when(failoverRoutingService.chatCompletionWithFailover(any())).thenReturn(dummyResponse);
 
         String jsonRequest = """
@@ -84,6 +88,7 @@ class ChatCompletionControllerTest {
         Mockito.when(tenantService.authenticateApiKey(any()))
                 .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+        Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
         Mockito.when(failoverRoutingService.streamChatCompletionWithFailover(any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
                     Consumer<ChatCompletionChunk> onChunk = invocation.getArgument(1);

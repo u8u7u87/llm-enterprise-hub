@@ -15,13 +15,29 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class ChatCompletionController {
 
     private final ChatExecutionService chatExecutionService;
+    private final com.enterprise.llm.guard.PromptGuardrailService promptGuardrailService;
 
-    public ChatCompletionController(ChatExecutionService chatExecutionService) {
+    public ChatCompletionController(
+            ChatExecutionService chatExecutionService,
+            com.enterprise.llm.guard.PromptGuardrailService promptGuardrailService
+    ) {
         this.chatExecutionService = chatExecutionService;
+        this.promptGuardrailService = promptGuardrailService;
     }
 
     @PostMapping("/completions")
     public Object createChatCompletion(@RequestBody ChatCompletionRequest request) {
+        // Validate prompt safety against injections
+        if (request.messages() != null) {
+            for (var msg : request.messages()) {
+                if (!promptGuardrailService.isSafe(msg.content())) {
+                    return ResponseEntity.badRequest()
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(java.util.Map.of("error", "Security violation: Potential prompt injection detected"));
+                }
+            }
+        }
+
         if (Boolean.TRUE.equals(request.stream())) {
             return chatExecutionService.executeStream(request);
         } else {

@@ -40,7 +40,8 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 .executor(this.virtualThreadExecutor)
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = new ObjectMapper()
+                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
     @Override

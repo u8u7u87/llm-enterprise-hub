@@ -10,7 +10,7 @@ server:
 
 llm:
   provider:
-    base-url: "http://localhost:8000"
-    api-key: "dummy-key"
-    model: "default-model"
+    base-url: "http://localhost:11434/v1"
+    api-key: "ollama"
+    model: "qwen2.5:0.5b"
     timeout-seconds: 60

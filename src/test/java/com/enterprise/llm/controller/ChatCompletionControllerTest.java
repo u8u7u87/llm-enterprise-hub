@@ -38,7 +38,13 @@ class ChatCompletionControllerTest {
     private ChatExecutionService chatExecutionService;
 
     @MockBean
-    private LlmClient llmClient;
+    private com.enterprise.llm.router.FailoverRoutingService failoverRoutingService;
+
+    @MockBean
+    private com.enterprise.llm.tenant.TenantService tenantService;
+
+    @MockBean
+    private com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
 
     @Test
     void shouldReturnSyncChatCompletion() throws Exception {
@@ -47,7 +53,10 @@ class ChatCompletionControllerTest {
                 List.of(new ChatCompletionResponse.Choice(0, new ChatMessage("assistant", "Sync Hi"), "stop")),
                 null
         );
-        Mockito.when(llmClient.chatCompletion(any())).thenReturn(dummyResponse);
+        Mockito.when(tenantService.authenticateApiKey(any()))
+                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+        Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+        Mockito.when(failoverRoutingService.chatCompletionWithFailover(any())).thenReturn(dummyResponse);
 
         String jsonRequest = """
                 {
@@ -58,6 +67,7 @@ class ChatCompletionControllerTest {
                 """;
 
         mockMvc.perform(post("/v1/chat/completions")
+                        .header("X-API-Key", "k")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonRequest))
                 .andExpect(status().isOk())
@@ -71,7 +81,10 @@ class ChatCompletionControllerTest {
 
     @Test
     void shouldStreamChatCompletionViaSse() throws Exception {
-        Mockito.when(llmClient.streamChatCompletion(any(), any(), any(), any()))
+        Mockito.when(tenantService.authenticateApiKey(any()))
+                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+        Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+        Mockito.when(failoverRoutingService.streamChatCompletionWithFailover(any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
                     Consumer<ChatCompletionChunk> onChunk = invocation.getArgument(1);
                     Runnable onComplete = invocation.getArgument(2);
@@ -91,6 +104,7 @@ class ChatCompletionControllerTest {
                 """;
 
         MvcResult mvcResult = mockMvc.perform(post("/v1/chat/completions")
+                        .header("X-API-Key", "k")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonRequest))
                 .andExpect(status().isOk())
@@ -106,7 +120,7 @@ class ChatCompletionControllerTest {
     @Test
     void shouldTriggerCancellationOnClientAbort() {
         AtomicBoolean cancelled = new AtomicBoolean(false);
-        Mockito.when(llmClient.streamChatCompletion(any(), any(), any(), any()))
+        Mockito.when(failoverRoutingService.streamChatCompletionWithFailover(any(), any(), any(), any()))
                 .thenAnswer(invocation -> new StreamCancellationHandle(() -> cancelled.set(true)));
 
         ChatCompletionRequest request = new ChatCompletionRequest("gpt-4o", List.of(), true, 0.7);

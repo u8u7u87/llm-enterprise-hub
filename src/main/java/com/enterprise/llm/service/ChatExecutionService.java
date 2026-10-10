@@ -5,6 +5,7 @@ import com.enterprise.llm.client.StreamCancellationHandle;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.router.FailoverRoutingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,16 +19,16 @@ public class ChatExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatExecutionService.class);
 
-    private final LlmClient llmClient;
+    private final FailoverRoutingService failoverRoutingService;
     private final ObjectMapper objectMapper;
 
-    public ChatExecutionService(LlmClient llmClient) {
-        this.llmClient = llmClient;
+    public ChatExecutionService(FailoverRoutingService failoverRoutingService) {
+        this.failoverRoutingService = failoverRoutingService;
         this.objectMapper = new ObjectMapper();
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request) {
-        return llmClient.chatCompletion(request);
+        return failoverRoutingService.chatCompletionWithFailover(request);
     }
 
     public SseEmitter executeStream(ChatCompletionRequest request) {
@@ -52,7 +53,7 @@ public class ChatExecutionService {
             }
         };
 
-        StreamCancellationHandle handle = llmClient.streamChatCompletion(
+        StreamCancellationHandle handle = failoverRoutingService.streamChatCompletionWithFailover(
                 request,
                 chunk -> {
                     try {

@@ -10,11 +10,20 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class LlmConfiguration {
 
-    @Bean
-    @ConditionalOnMissingBean
-    public LlmClient llmClient(
-            @Value("${llm.provider.base-url:http://localhost:8000}") String baseUrl,
-            @Value("${llm.provider.api-key:dummy-key}") String apiKey
+    @Bean(name = "primaryLlmClient")
+    @ConditionalOnMissingBean(name = "primaryLlmClient")
+    public LlmClient primaryLlmClient(
+            @Value("${llm.provider.base-url:http://localhost:11434/v1}") String baseUrl,
+            @Value("${llm.provider.api-key:ollama}") String apiKey
+    ) {
+        return new OpenAiCompatibleLlmClient(baseUrl, apiKey);
+    }
+
+    @Bean(name = "fallbackLlmClient")
+    @ConditionalOnMissingBean(name = "fallbackLlmClient")
+    public LlmClient fallbackLlmClient(
+            @Value("${llm.fallback.base-url:http://localhost:11434/v1}") String baseUrl,
+            @Value("${llm.fallback.api-key:ollama}") String apiKey
     ) {
         return new OpenAiCompatibleLlmClient(baseUrl, apiKey);
     }

@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS tenants (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    api_key TEXT NOT NULL UNIQUE,
+    qps_limit INTEGER NOT NULL DEFAULT 10,
+    daily_token_quota INTEGER NOT NULL DEFAULT 100000,
+    used_tokens INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenants_api_key ON tenants(api_key);

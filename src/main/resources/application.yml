@@ -4,6 +4,13 @@ spring:
   threads:
     virtual:
       enabled: true
+  datasource:
+    url: jdbc:sqlite:hub-data.db
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
 
 server:
   port: 8080

@@ -1,8 +1,11 @@
 package com.enterprise.llm.controller;
 
 import com.enterprise.llm.auth.TenantSecurityContext;
+import com.enterprise.llm.guard.OutputGuardrailService;
 import com.enterprise.llm.guard.PromptGuardrailService;
 import com.enterprise.llm.model.ChatCompletionRequest;
+import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.quota.QuotaExceededException;
 import com.enterprise.llm.quota.QuotaReservation;
 import com.enterprise.llm.quota.TenantQuotaService;
@@ -18,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -26,6 +30,7 @@ public class ChatCompletionController {
 
     private final ChatExecutionService chatExecutionService;
     private final PromptGuardrailService promptGuardrailService;
+    private final OutputGuardrailService outputGuardrailService;
     private final TokenEstimator tokenEstimator;
     private final TenantQuotaService tenantQuotaService;
 
@@ -33,11 +38,13 @@ public class ChatCompletionController {
     public ChatCompletionController(
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService,
+            OutputGuardrailService outputGuardrailService,
             TokenEstimator tokenEstimator,
             TenantQuotaService tenantQuotaService
     ) {
         this.chatExecutionService = chatExecutionService;
         this.promptGuardrailService = promptGuardrailService;
+        this.outputGuardrailService = outputGuardrailService;
         this.tokenEstimator = tokenEstimator;
         this.tenantQuotaService = tenantQuotaService;
     }
@@ -46,7 +53,7 @@ public class ChatCompletionController {
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService
     ) {
-        this(chatExecutionService, promptGuardrailService, new TokenEstimator(), null);
+        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null);
     }
 
     @PostMapping("/completions")
@@ -80,9 +87,29 @@ public class ChatCompletionController {
         if (Boolean.TRUE.equals(request.stream())) {
             return chatExecutionService.executeStream(request, reservation);
         } else {
+            ChatCompletionResponse response = chatExecutionService.executeSync(request, reservation);
+            if (response != null && response.choices() != null && outputGuardrailService != null) {
+                List<ChatCompletionResponse.Choice> sanitizedChoices = response.choices().stream()
+                        .map(choice -> {
+                            if (choice.message() != null && choice.message().content() != null) {
+                                String clean = outputGuardrailService.sanitize(choice.message().content());
+                                return new ChatCompletionResponse.Choice(
+                                        choice.index(),
+                                        new ChatMessage(choice.message().role(), clean),
+                                        choice.finishReason()
+                                );
+                            }
+                            return choice;
+                        })
+                        .toList();
+                response = new ChatCompletionResponse(
+                        response.id(), response.object(), response.created(),
+                        response.model(), sanitizedChoices, response.usage()
+                );
+            }
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(chatExecutionService.executeSync(request, reservation));
+                    .body(response);
         }
     }
 }

@@ -49,6 +49,15 @@ class ChatCompletionControllerTest {
     @MockBean
     private com.enterprise.llm.guard.PromptGuardrailService promptGuardrailService;
 
+    @MockBean
+    private com.enterprise.llm.quota.TenantQuotaService tenantQuotaService;
+
+    @MockBean
+    private com.enterprise.llm.guard.OutputGuardrailService outputGuardrailService;
+
+    @MockBean
+    private com.enterprise.llm.token.TokenEstimator tokenEstimator;
+
     @Test
     void shouldReturnSyncChatCompletion() throws Exception {
         ChatCompletionResponse dummyResponse = new ChatCompletionResponse(

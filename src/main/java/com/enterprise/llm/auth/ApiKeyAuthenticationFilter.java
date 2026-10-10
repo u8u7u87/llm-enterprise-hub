@@ -18,9 +18,11 @@ import java.util.Optional;
 public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     private final TenantService tenantService;
+    private final com.enterprise.llm.ratelimit.TenantRateLimiter rateLimiter;
 
-    public ApiKeyAuthenticationFilter(TenantService tenantService) {
+    public ApiKeyAuthenticationFilter(TenantService tenantService, com.enterprise.llm.ratelimit.TenantRateLimiter rateLimiter) {
         this.tenantService = tenantService;
+        this.rateLimiter = rateLimiter;
     }
 
     @Override
@@ -52,6 +54,11 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         TenantEntity tenant = tenantOpt.get();
         if (!tenant.isEnabled()) {
             sendJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Tenant account is disabled");
+            return;
+        }
+
+        if (!rateLimiter.tryAcquire(tenant)) {
+            sendJsonError(response, 429, "Rate limit or daily token quota exceeded");
             return;
         }
 

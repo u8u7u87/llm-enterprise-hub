@@ -75,6 +75,22 @@ public class TenantRepository {
         jdbcTemplate.update(sql, tokens, id);
     }
 
+    public java.util.List<TenantEntity> findAll() {
+        return jdbcTemplate.query("SELECT * FROM tenants ORDER BY created_at DESC", rowMapper);
+    }
+
+    public void updateQuota(String id, long dailyQuota, Long usedTokens) {
+        if (usedTokens != null) {
+            jdbcTemplate.update("UPDATE tenants SET daily_token_quota = ?, used_tokens = ? WHERE id = ?", dailyQuota, usedTokens, id);
+        } else {
+            jdbcTemplate.update("UPDATE tenants SET daily_token_quota = ? WHERE id = ?", dailyQuota, id);
+        }
+    }
+
+    public void updateEnabled(String id, boolean enabled) {
+        jdbcTemplate.update("UPDATE tenants SET enabled = ? WHERE id = ?", enabled ? 1 : 0, id);
+    }
+
     public void deleteAll() {
         jdbcTemplate.update("DELETE FROM tenants");
     }

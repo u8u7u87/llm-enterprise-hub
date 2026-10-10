@@ -58,6 +58,9 @@ class ChatCompletionControllerTest {
     @MockBean
     private com.enterprise.llm.token.TokenEstimator tokenEstimator;
 
+    @MockBean
+    private com.enterprise.llm.cache.CacheEngine cacheEngine;
+
     @Test
     void shouldReturnSyncChatCompletion() throws Exception {
         ChatCompletionResponse dummyResponse = new ChatCompletionResponse(

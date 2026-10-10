@@ -1,6 +1,7 @@
 package com.enterprise.llm.controller;
 
 import com.enterprise.llm.auth.TenantSecurityContext;
+import com.enterprise.llm.cache.CacheEngine;
 import com.enterprise.llm.guard.OutputGuardrailService;
 import com.enterprise.llm.guard.PromptGuardrailService;
 import com.enterprise.llm.model.ChatCompletionRequest;
@@ -33,6 +34,7 @@ public class ChatCompletionController {
     private final OutputGuardrailService outputGuardrailService;
     private final TokenEstimator tokenEstimator;
     private final TenantQuotaService tenantQuotaService;
+    private final CacheEngine cacheEngine;
 
     @Autowired
     public ChatCompletionController(
@@ -40,20 +42,22 @@ public class ChatCompletionController {
             PromptGuardrailService promptGuardrailService,
             OutputGuardrailService outputGuardrailService,
             TokenEstimator tokenEstimator,
-            TenantQuotaService tenantQuotaService
+            TenantQuotaService tenantQuotaService,
+            CacheEngine cacheEngine
     ) {
         this.chatExecutionService = chatExecutionService;
         this.promptGuardrailService = promptGuardrailService;
         this.outputGuardrailService = outputGuardrailService;
         this.tokenEstimator = tokenEstimator;
         this.tenantQuotaService = tenantQuotaService;
+        this.cacheEngine = cacheEngine;
     }
 
     public ChatCompletionController(
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService
     ) {
-        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null);
+        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null);
     }
 
     @PostMapping("/completions")
@@ -69,7 +73,22 @@ public class ChatCompletionController {
             }
         }
 
-        // 2. Pre-flight Token Quota Reservation
+        // 2. Check Two-Level Cache (L1/L2)
+        if (cacheEngine != null) {
+            var cached = cacheEngine.lookup(request);
+            if (cached.isPresent()) {
+                if (Boolean.TRUE.equals(request.stream())) {
+                    return chatExecutionService.emitCachedStream(cached.get());
+                } else {
+                    return ResponseEntity.ok()
+                            .header("X-Cache-Lookup", "HIT")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(cached.get());
+                }
+            }
+        }
+
+        // 3. Pre-flight Token Quota Reservation
         TenantEntity tenant = TenantSecurityContext.getCurrentTenant();
         QuotaReservation reservation = null;
         if (tenant != null && tenantQuotaService != null) {
@@ -83,7 +102,7 @@ public class ChatCompletionController {
             }
         }
 
-        // 3. Execution
+        // 4. Execution
         if (Boolean.TRUE.equals(request.stream())) {
             return chatExecutionService.executeStream(request, reservation);
         } else {

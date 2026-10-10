@@ -1,9 +1,12 @@
 package com.enterprise.llm.service;
 
+import com.enterprise.llm.cache.CacheEngine;
 import com.enterprise.llm.client.StreamCancellationHandle;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.model.ChatMessage;
+import com.enterprise.llm.model.Usage;
 import com.enterprise.llm.quota.QuotaReservation;
 import com.enterprise.llm.quota.TenantQuotaService;
 import com.enterprise.llm.router.FailoverRoutingService;
@@ -16,7 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class ChatExecutionService {
@@ -26,22 +31,33 @@ public class ChatExecutionService {
     private final FailoverRoutingService failoverRoutingService;
     private final TenantQuotaService tenantQuotaService;
     private final TokenEstimator tokenEstimator;
+    private final CacheEngine cacheEngine;
     private final ObjectMapper objectMapper;
 
     @Autowired
     public ChatExecutionService(
             FailoverRoutingService failoverRoutingService,
             TenantQuotaService tenantQuotaService,
-            TokenEstimator tokenEstimator
+            TokenEstimator tokenEstimator,
+            CacheEngine cacheEngine
     ) {
         this.failoverRoutingService = failoverRoutingService;
         this.tenantQuotaService = tenantQuotaService;
         this.tokenEstimator = tokenEstimator;
+        this.cacheEngine = cacheEngine;
         this.objectMapper = new ObjectMapper();
     }
 
+    public ChatExecutionService(
+            FailoverRoutingService failoverRoutingService,
+            TenantQuotaService tenantQuotaService,
+            TokenEstimator tokenEstimator
+    ) {
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null);
+    }
+
     public ChatExecutionService(FailoverRoutingService failoverRoutingService) {
-        this(failoverRoutingService, null, new TokenEstimator());
+        this(failoverRoutingService, null, new TokenEstimator(), null);
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request) {
@@ -63,6 +79,9 @@ public class ChatExecutionService {
                 }
                 tenantQuotaService.settle(reservation, actualTokens);
             }
+            if (cacheEngine != null && response != null) {
+                cacheEngine.put(request, response);
+            }
             return response;
         } catch (Exception e) {
             if (tenantQuotaService != null && reservation != null) {
@@ -79,6 +98,7 @@ public class ChatExecutionService {
     public SseEmitter executeStream(ChatCompletionRequest request, QuotaReservation reservation) {
         final StreamCancellationHandle[] handleHolder = new StreamCancellationHandle[1];
         final AtomicInteger generatedTokens = new AtomicInteger(0);
+        final AtomicReference<StringBuilder> streamContentAcc = new AtomicReference<>(new StringBuilder());
 
         SseEmitter emitter = new SseEmitter(120_000L) {
             @Override
@@ -109,6 +129,7 @@ public class ChatExecutionService {
                                 for (var choice : chunk.choices()) {
                                     if (choice.delta() != null && choice.delta().content() != null) {
                                         generatedTokens.addAndGet(tokenEstimator.countTokens(choice.delta().content()));
+                                        streamContentAcc.get().append(choice.delta().content());
                                     }
                                 }
                             }
@@ -122,10 +143,21 @@ public class ChatExecutionService {
                 },
                 () -> {
                     try {
+                        int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(request.messages()) : 0;
+                        int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : promptTokens;
                         if (tenantQuotaService != null && reservation != null) {
-                            int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(request.messages()) : 0;
-                            int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : promptTokens;
                             tenantQuotaService.settle(reservation, totalTokens);
+                        }
+                        if (cacheEngine != null && streamContentAcc.get().length() > 0) {
+                            ChatCompletionResponse streamResponse = new ChatCompletionResponse(
+                                    "stream-cache-" + System.currentTimeMillis(),
+                                    "chat.completion",
+                                    System.currentTimeMillis() / 1000,
+                                    request.model(),
+                                    List.of(new ChatCompletionResponse.Choice(0, new ChatMessage("assistant", streamContentAcc.get().toString()), "stop")),
+                                    new Usage(promptTokens, generatedTokens.get(), totalTokens)
+                            );
+                            cacheEngine.put(request, streamResponse);
                         }
                         emitter.send(SseEmitter.event().data("[DONE]"));
                         emitter.complete();
@@ -167,6 +199,40 @@ public class ChatExecutionService {
             }
         });
 
+        return emitter;
+    }
+
+    public SseEmitter emitCachedStream(ChatCompletionResponse cachedResponse) {
+        SseEmitter emitter = new SseEmitter(60_000L);
+        Thread.ofVirtual().start(() -> {
+            try {
+                if (cachedResponse != null && cachedResponse.choices() != null && !cachedResponse.choices().isEmpty()) {
+                    String fullContent = cachedResponse.choices().get(0).message().content();
+                    if (fullContent != null && !fullContent.isEmpty()) {
+                        int chunkSize = Math.max(1, fullContent.length() / 5);
+                        for (int i = 0; i < fullContent.length(); i += chunkSize) {
+                            int end = Math.min(fullContent.length(), i + chunkSize);
+                            String slice = fullContent.substring(i, end);
+                            ChatCompletionChunk chunk = new ChatCompletionChunk(
+                                    cachedResponse.id(),
+                                    "chat.completion.chunk",
+                                    cachedResponse.created(),
+                                    cachedResponse.model(),
+                                    List.of(new ChatCompletionChunk.ChoiceChunk(0, new ChatCompletionChunk.Delta("assistant", slice), null)),
+                                    null
+                            );
+                            emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(chunk)));
+                            Thread.sleep(10);
+                        }
+                    }
+                }
+                emitter.send(SseEmitter.event().data("[DONE]"));
+                emitter.complete();
+            } catch (Exception e) {
+                log.warn("Error emitting cached stream", e);
+                emitter.completeWithError(e);
+            }
+        });
         return emitter;
     }
 }

@@ -37,6 +37,14 @@ public class FailoverRoutingService {
         this.fallbackModel = fallbackModel;
     }
 
+    public LlmClient getPrimaryClient() {
+        return primaryClient;
+    }
+
+    public LlmClient getFallbackClient() {
+        return fallbackClient;
+    }
+
     public ChatCompletionResponse chatCompletionWithFailover(ChatCompletionRequest request) {
         if (isCircuitOpen()) {
             log.warn("Circuit Breaker OPEN: Bypassing primary and executing fallback directly");
@@ -99,7 +107,10 @@ public class FailoverRoutingService {
                 fallbackModel,
                 request.messages(),
                 false,
-                request.temperature()
+                request.temperature(),
+                request.maxTokens(),
+                request.tools(),
+                request.toolChoice()
         );
         return fallbackClient.chatCompletion(fallbackRequest);
     }
@@ -114,7 +125,10 @@ public class FailoverRoutingService {
                 fallbackModel,
                 request.messages(),
                 true,
-                request.temperature()
+                request.temperature(),
+                request.maxTokens(),
+                request.tools(),
+                request.toolChoice()
         );
         return fallbackClient.streamChatCompletion(fallbackRequest, onChunk, onComplete, onError);
     }

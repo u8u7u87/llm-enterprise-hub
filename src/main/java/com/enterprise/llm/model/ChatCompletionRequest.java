@@ -1,5 +1,6 @@
 package com.enterprise.llm.model;
 
+import com.enterprise.llm.agent.ToolDefinition;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -13,7 +14,9 @@ public record ChatCompletionRequest(
         List<ChatMessage> messages,
         Boolean stream,
         Double temperature,
-        Integer maxTokens
+        Integer maxTokens,
+        List<ToolDefinition> tools,
+        Object toolChoice
 ) {
     public ChatCompletionRequest {
         if (stream == null) {
@@ -22,6 +25,11 @@ public record ChatCompletionRequest(
     }
 
     public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature) {
-        this(model, messages, stream, temperature, null);
+        this(model, messages, stream, temperature, null, null, null);
+    }
+
+    public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature, Integer maxTokens) {
+        this(model, messages, stream, temperature, maxTokens, null, null);
     }
 }
+

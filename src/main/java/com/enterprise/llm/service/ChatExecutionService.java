@@ -1,5 +1,6 @@
 package com.enterprise.llm.service;
 
+import com.enterprise.llm.agent.AgentToolOrchestrator;
 import com.enterprise.llm.cache.CacheEngine;
 import com.enterprise.llm.client.StreamCancellationHandle;
 import com.enterprise.llm.model.ChatCompletionChunk;
@@ -32,6 +33,7 @@ public class ChatExecutionService {
     private final TenantQuotaService tenantQuotaService;
     private final TokenEstimator tokenEstimator;
     private final CacheEngine cacheEngine;
+    private final AgentToolOrchestrator agentToolOrchestrator;
     private final ObjectMapper objectMapper;
 
     @Autowired
@@ -39,13 +41,24 @@ public class ChatExecutionService {
             FailoverRoutingService failoverRoutingService,
             TenantQuotaService tenantQuotaService,
             TokenEstimator tokenEstimator,
-            CacheEngine cacheEngine
+            CacheEngine cacheEngine,
+            @Autowired(required = false) AgentToolOrchestrator agentToolOrchestrator
     ) {
         this.failoverRoutingService = failoverRoutingService;
         this.tenantQuotaService = tenantQuotaService;
         this.tokenEstimator = tokenEstimator;
         this.cacheEngine = cacheEngine;
+        this.agentToolOrchestrator = agentToolOrchestrator;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public ChatExecutionService(
+            FailoverRoutingService failoverRoutingService,
+            TenantQuotaService tenantQuotaService,
+            TokenEstimator tokenEstimator,
+            CacheEngine cacheEngine
+    ) {
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, null);
     }
 
     public ChatExecutionService(
@@ -53,11 +66,11 @@ public class ChatExecutionService {
             TenantQuotaService tenantQuotaService,
             TokenEstimator tokenEstimator
     ) {
-        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null);
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null, null);
     }
 
     public ChatExecutionService(FailoverRoutingService failoverRoutingService) {
-        this(failoverRoutingService, null, new TokenEstimator(), null);
+        this(failoverRoutingService, null, new TokenEstimator(), null, null);
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request) {
@@ -66,7 +79,13 @@ public class ChatExecutionService {
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request, QuotaReservation reservation) {
         try {
-            ChatCompletionResponse response = failoverRoutingService.chatCompletionWithFailover(request);
+            ChatCompletionResponse response;
+            if (request.tools() != null && !request.tools().isEmpty() && agentToolOrchestrator != null) {
+                String tenantId = reservation != null ? reservation.tenantId() : "default";
+                response = agentToolOrchestrator.runLoop(failoverRoutingService.getPrimaryClient(), request, tenantId);
+            } else {
+                response = failoverRoutingService.chatCompletionWithFailover(request);
+            }
             if (tenantQuotaService != null && reservation != null) {
                 int actualTokens = 0;
                 if (response != null && response.usage() != null && response.usage().totalTokens() != null) {

@@ -1,0 +1,79 @@
+package com.enterprise.llm.auth;
+
+import com.enterprise.llm.tenant.TenantEntity;
+import com.enterprise.llm.tenant.TenantService;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.Optional;
+
+@Component
+@Order(1)
+public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
+
+    private final TenantService tenantService;
+
+    public ApiKeyAuthenticationFilter(TenantService tenantService) {
+        this.tenantService = tenantService;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        // Allow health checks or root endpoints without auth
+        return path.equals("/") || path.startsWith("/actuator") || path.equals("/error");
+    }
+
+    @Override
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain
+    ) throws ServletException, IOException {
+        String apiKey = extractApiKey(request);
+
+        if (apiKey == null || apiKey.isBlank()) {
+            sendJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "Missing API Key (Provide Authorization or X-API-Key header)");
+            return;
+        }
+
+        Optional<TenantEntity> tenantOpt = tenantService.authenticateApiKey(apiKey);
+        if (tenantOpt.isEmpty()) {
+            sendJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "Invalid API Key");
+            return;
+        }
+
+        TenantEntity tenant = tenantOpt.get();
+        if (!tenant.isEnabled()) {
+            sendJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Tenant account is disabled");
+            return;
+        }
+
+        try {
+            TenantSecurityContext.setTenant(tenant);
+            filterChain.doFilter(request, response);
+        } finally {
+            TenantSecurityContext.clear();
+        }
+    }
+
+    private String extractApiKey(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7).trim();
+        }
+        return request.getHeader("X-API-Key");
+    }
+
+    private void sendJsonError(HttpServletResponse response, int status, String message) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write("{\"status\":" + status + ",\"error\":\"" + message + "\"}");
+    }
+}

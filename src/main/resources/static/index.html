@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Enterprise Hub - 实时监控大盘与 Agent 调度中心</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .live-dot { animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased">
+    <!-- 顶部导航 -->
+    <header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
+                HUB
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                    LLM-Enterprise-Hub 控制面
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 live-dot"></span>
+                        LIVE
+                    </span>
+                </h1>
+                <p class="text-xs text-slate-400">Java 21 Virtual Threads · SQLite 多租户治理 · 断点续跑状态机</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4">
+            <div class="flex items-center bg-slate-800/80 rounded-lg px-3 py-1.5 border border-slate-700">
+                <span class="text-xs text-slate-400 mr-2">Admin Key:</span>
+                <input id="adminKeyInput" type="password" value="test-admin-secret-key-12345" 
+                       class="bg-transparent text-xs text-slate-200 outline-none w-36" placeholder="输入密钥" />
+            </div>
+            <button onclick="refreshDashboard()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-lg shadow transition">
+                立即刷新
+            </button>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        <!-- 统计核心卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5 shadow-sm">
+                <div class="text-xs font-medium text-slate-400 mb-1">活跃租户 / 总租户</div>
+                <div class="flex items-baseline space-x-2">
+                    <span id="cardTenants" class="text-2xl font-bold text-white tracking-tight">--</span>
+                    <span class="text-xs text-emerald-400">SQLite 持久化</span>
+                </div>
+            </div>
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5 shadow-sm">
+                <div class="text-xs font-medium text-slate-400 mb-1">累计已消耗 Tokens</div>
+                <div class="flex items-baseline space-x-2">
+                    <span id="cardUsedTokens" class="text-2xl font-bold text-cyan-400 tracking-tight">--</span>
+                    <span class="text-xs text-slate-400">BPE 实时结算</span>
+                </div>
+            </div>
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5 shadow-sm">
+                <div class="text-xs font-medium text-slate-400 mb-1">缓存节约 Tokens (0 Token 响应)</div>
+                <div class="flex items-baseline space-x-2">
+                    <span id="cardSavedTokens" class="text-2xl font-bold text-emerald-400 tracking-tight">--</span>
+                    <span class="text-xs text-emerald-400">L1/L2 命中</span>
+                </div>
+            </div>
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5 shadow-sm">
+                <div class="text-xs font-medium text-slate-400 mb-1">综合缓存命中率</div>
+                <div class="flex items-baseline space-x-2">
+                    <span id="cardHitRate" class="text-2xl font-bold text-amber-400 tracking-tight">--%</span>
+                    <span class="text-xs text-slate-400">亚毫秒响应</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ECharts 图表行 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- 吞吐与延迟走势图 -->
+            <div class="lg:col-span-2 bg-slate-800/60 border border-slate-700/60 rounded-xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-semibold text-slate-200">系统吞吐量与平均延迟趋势</h3>
+                    <span class="text-xs text-slate-400">按分钟粒度聚合</span>
+                </div>
+                <div id="chartTimeline" class="w-full h-72"></div>
+            </div>
+            <!-- 缓存与拦截分布饼图 -->
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-semibold text-slate-200">缓存与安全拦截分布</h3>
+                    <span class="text-xs text-slate-400">双向护栏守门</span>
+                </div>
+                <div id="chartDistribution" class="w-full h-72"></div>
+            </div>
+        </div>
+
+        <!-- Agent 任务执行状态机与断点续跑控制台 -->
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5 space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        ReAct Agent 任务状态机控制台
+                        <span class="text-xs px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                            断点持久化与自动恢复
+                        </span>
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1">支持失败中断任务状态查看、Checkpoint 还原与现场一键重新拉起 (Resume)</p>
+                </div>
+                <button onclick="loadAgentTasks()" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs font-medium rounded transition">
+                    刷新任务
+                </button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="border-b border-slate-700/80 text-slate-400">
+                            <th class="py-2.5 px-3">任务 ID</th>
+                            <th class="py-2.5 px-3">租户 ID</th>
+                            <th class="py-2.5 px-3">模型</th>
+                            <th class="py-2.5 px-3">当前轮次 / 上限</th>
+                            <th class="py-2.5 px-3">执行状态</th>
+                            <th class="py-2.5 px-3">异常/中断原因</th>
+                            <th class="py-2.5 px-3 text-right">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="agentTasksTableBody" class="divide-y divide-slate-700/50 text-slate-200">
+                        <tr>
+                            <td colspan="7" class="py-4 text-center text-slate-500">正在加载任务列表...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let timelineChart = null;
+        let distributionChart = null;
+
+        function getAdminKey() {
+            return document.getElementById('adminKeyInput').value.trim();
+        }
+
+        async function refreshDashboard() {
+            const adminKey = getAdminKey();
+            try {
+                // 1. 获取 Overview 指标
+                const res = await fetch('/v1/admin/analytics/overview', {
+                    headers: { 'X-Admin-Key': adminKey }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('cardTenants').textContent = `${data.active_tenants} / ${data.total_tenants}`;
+                    document.getElementById('cardUsedTokens').textContent = Number(data.total_tokens_used || 0).toLocaleString();
+                    document.getElementById('cardSavedTokens').textContent = Number(data.saved_tokens || 0).toLocaleString();
+                    document.getElementById('cardHitRate').textContent = `${data.cache_hit_rate || 0}%`;
+
+                    renderDistributionChart(data);
+                }
+
+                // 2. 获取 Timeline 时序指标
+                const timelineRes = await fetch('/v1/admin/metrics/timeline?limit=20', {
+                    headers: { 'X-Admin-Key': adminKey }
+                });
+                if (timelineRes.ok) {
+                    const timelineData = await timelineRes.json();
+                    renderTimelineChart(timelineData);
+                }
+
+                // 3. 加载 Agent 任务列表
+                await loadAgentTasks();
+            } catch (e) {
+                console.error("加载数据大盘失败", e);
+            }
+        }
+
+        function renderTimelineChart(data) {
+            if (!timelineChart) {
+                timelineChart = echarts.init(document.getElementById('chartTimeline'), 'dark');
+            }
+            const categories = data.length ? data.map(d => d.minute_bucket) : ['当前时段'];
+            const requests = data.length ? data.map(d => d.total_requests) : [0];
+            const latencies = data.length ? data.map(d => d.avg_latency_ms) : [0];
+
+            timelineChart.setOption({
+                backgroundColor: 'transparent',
+                tooltip: { trigger: 'axis' },
+                legend: { data: ['请求数', '平均延迟 (ms)'], textStyle: { color: '#94a3b8' } },
+                grid: { top: 40, right: 30, bottom: 25, left: 40 },
+                xAxis: { type: 'category', data: categories, axisLine: { lineStyle: { color: '#475569' } } },
+                yAxis: [
+                    { type: 'value', name: '次数', splitLine: { lineStyle: { color: '#334155' } } },
+                    { type: 'value', name: '延迟 (ms)', splitLine: { show: false } }
+                ],
+                series: [
+                    {
+                        name: '请求数',
+                        type: 'bar',
+                        data: requests,
+                        itemStyle: { color: '#6366f1', borderRadius: [4, 4, 0, 0] }
+                    },
+                    {
+                        name: '平均延迟 (ms)',
+                        type: 'line',
+                        yAxisIndex: 1,
+                        smooth: true,
+                        data: latencies,
+                        itemStyle: { color: '#06b6d4' }
+                    }
+                ]
+            });
+        }
+
+        function renderDistributionChart(data) {
+            if (!distributionChart) {
+                distributionChart = echarts.init(document.getElementById('chartDistribution'), 'dark');
+            }
+            distributionChart.setOption({
+                backgroundColor: 'transparent',
+                tooltip: { trigger: 'item' },
+                series: [{
+                    type: 'pie',
+                    radius: ['45%', '70%'],
+                    avoidLabelOverlap: false,
+                    label: { show: false },
+                    data: [
+                        { value: data.l1_hits || 0, name: 'L1 精确命中', itemStyle: { color: '#10b981' } },
+                        { value: data.l2_hits || 0, name: 'L2 语义命中', itemStyle: { color: '#3b82f6' } },
+                        { value: data.misses || 0, name: '未命中 (直通模型)', itemStyle: { color: '#64748b' } }
+                    ]
+                }]
+            });
+        }
+
+        async function loadAgentTasks() {
+            const adminKey = getAdminKey();
+            const tbody = document.getElementById('agentTasksTableBody');
+            try {
+                const res = await fetch('/v1/agent/tasks', {
+                    headers: { 'X-Admin-Key': adminKey }
+                });
+                if (!res.ok) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-slate-500">暂无任务或接口未配置</td></tr>';
+                    return;
+                }
+                const tasks = await res.json();
+                if (!tasks.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-slate-500">当前没有处于执行中或中断的 Agent 任务</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = tasks.map(t => {
+                    let statusBadge = '';
+                    if (t.status === 'COMPLETED') statusBadge = '<span class="px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">已完成</span>';
+                    else if (t.status === 'RUNNING') statusBadge = '<span class="px-2 py-0.5 rounded text-cyan-400 bg-cyan-500/10 border border-cyan-500/20">运行中</span>';
+                    else if (t.status === 'SUSPENDED') statusBadge = '<span class="px-2 py-0.5 rounded text-amber-400 bg-amber-500/10 border border-amber-500/20">已挂起</span>';
+                    else statusBadge = '<span class="px-2 py-0.5 rounded text-rose-400 bg-rose-500/10 border border-rose-500/20">异常失败</span>';
+
+                    const canResume = t.status === 'SUSPENDED' || t.status === 'FAILED';
+                    const actionBtn = canResume
+                        ? `<button onclick="resumeAgentTask('${t.task_id}')" class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded transition text-xs font-medium">重新拉起 (Resume)</button>`
+                        : `<span class="text-slate-500 text-xs">无动作</span>`;
+
+                    return `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-2.5 px-3 font-mono font-medium">${t.task_id}</td>
+                            <td class="py-2.5 px-3">${t.tenant_id}</td>
+                            <td class="py-2.5 px-3 font-mono">${t.model}</td>
+                            <td class="py-2.5 px-3">${t.current_iteration} / ${t.max_iterations}</td>
+                            <td class="py-2.5 px-3">${statusBadge}</td>
+                            <td class="py-2.5 px-3 text-slate-400 truncate max-w-xs" title="${t.error_message || ''}">${t.error_message || '无'}</td>
+                            <td class="py-2.5 px-3 text-right">${actionBtn}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-rose-400">加载任务列表异常</td></tr>';
+            }
+        }
+
+        async function resumeAgentTask(taskId) {
+            const adminKey = getAdminKey();
+            try {
+                const res = await fetch(`/v1/agent/tasks/${taskId}/resume`, {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': adminKey }
+                });
+                if (res.ok) {
+                    alert(`任务 ${taskId} 重新拉起成功！`);
+                    await loadAgentTasks();
+                } else {
+                    const err = await res.json();
+                    alert(`重新拉起失败: ${err.error || '未知错误'}`);
+                }
+            } catch (e) {
+                alert(`请求失败: ${e.message}`);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            refreshDashboard();
+            setInterval(refreshDashboard, 5000); // 每 5 秒自动轮询最新指标
+        });
+        window.addEventListener('resize', () => {
+            if (timelineChart) timelineChart.resize();
+            if (distributionChart) distributionChart.resize();
+        });
+    </script>
+</body>
+</html>

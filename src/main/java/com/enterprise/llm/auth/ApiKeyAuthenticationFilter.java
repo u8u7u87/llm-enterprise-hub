@@ -28,8 +28,10 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        // Allow health checks, admin management, or root endpoints without tenant auth
-        return path.equals("/") || path.startsWith("/actuator") || path.equals("/error") || path.startsWith("/v1/admin");
+        // Allow health checks, admin management, or root/static endpoints without tenant auth
+        return path.equals("/") || path.startsWith("/index.html") || path.startsWith("/static") ||
+               path.endsWith(".html") || path.endsWith(".js") || path.endsWith(".css") ||
+               path.startsWith("/actuator") || path.equals("/error") || path.startsWith("/v1/admin");
     }
 
     @Override

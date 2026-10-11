@@ -173,3 +173,36 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   - **指令安全评级**：阻断破坏性指令（如 `rm -rf`、`DROP TABLE`）；
   - **跨租户隔离守门**：阻断任何越权携带其他租户标识的工具调用。
 
+---
+
+## 阶段五实时监控页面与 ReAct 断点续跑 (Phase 5 Evolution)
+
+### 支柱 1：内置现代化 Web 监控大盘 (Zero-Dependency Single Page App)
+- **直接浏览器访问**：服务启动后直接打开 `http://localhost:8080/` 或 `http://localhost:8080/index.html` 即可直达运维大盘。
+- **开箱即用、零额外依赖**：无需额外部署 React/Vue/Node.js 前端工程，静态资源内嵌于 Spring Boot，采用现代化 **Tailwind CSS + Apache ECharts** 极速渲染。
+- **实时指标动态轮询**：
+  - 核心状态指标卡：活跃租户、累计消耗 Tokens、**缓存节省 Tokens**、缓存命中率；
+  - **系统吞吐量与平均延迟趋势 (RPM / Latency)**：按分钟滑动窗口实时刷新；
+  - **缓存与安全拦截分布饼图**：直观展示 L1 精准命中、L2 语义命中、模型直通及安全违规比例；
+  - **ReAct Agent 任务调度控制台**：动态展示当前任务执行状态机（RUNNING, COMPLETED, SUSPENDED, FAILED），并在任务异常挂起时提供一键恢复交互。
+
+### 支柱 2：监控指标时序实时记录与持久化 (`MetricsRecordService`)
+- **双层滑动窗口与持久化存储**：
+  - **内存层**：基于 `ConcurrentHashMap` 与双端队列维护近 120 分钟按分钟粒度的极速环形滑动窗口，支撑前端秒级无感轮询；
+  - **DB 持久化层**：定时每 60 秒批量刷盘写入 SQLite `system_metrics` 表，建立 `minute_bucket` 索引，保障历史时序监控不丢失。
+- **时序监控接口**：
+  - `GET /v1/admin/metrics/timeline?minutes=60`（需 `X-Admin-Key` 鉴权）。
+
+### 支柱 3：ReAct Agent 状态机与断点续跑 (`AgentTaskManager` & `AgentTaskController`)
+在多轮工具调用或自主 Agent 循环中，若突发网络超时、上游模型 5xx 故障或工具执行中断，系统自动持久化 Checkpoint 断点，支持后续零状态损失续跑：
+- **核心状态机流转**：
+  `PENDING` -> `RUNNING` -> [成功] `COMPLETED` / [异常/超时] `SUSPENDED` -> [人工/自动拉起] `RUNNING`
+- **断点 Checkpoint 持久化**：
+  每一轮工具调用完成后，`AgentToolOrchestrator` 通过 `CheckpointListener` 自动将当前轮次 `current_iteration` 与全量会话历史 `history_json`（含工具调用请求与执行响应）事务性持久化到 SQLite `agent_tasks` 表。
+- **现场还原与跳步续跑**：
+  重新拉起时，自动从上次成功的最后一次 Checkpoint 加载对话，跳过已成功的历史工具调用，直接向模型发起下一轮推理，重试计数 `retry_count + 1`，避免重复扣费与重复执行外部工具副作用。
+- **REST 控制面 API**：
+  - **查询任务列表**：`GET /v1/agent/tasks`（需 `X-Admin-Key`）
+  - **查询任务详情**：`GET /v1/agent/tasks/{id}`（需 `X-Admin-Key`）
+  - **断点重新拉起 (Resume)**：`POST /v1/agent/tasks/{id}/resume`（需 `X-Admin-Key`）
+

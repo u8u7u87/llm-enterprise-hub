@@ -27,3 +27,21 @@ CREATE TABLE IF NOT EXISTS system_metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_metrics_minute ON system_metrics(minute_bucket);
+
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    task_id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    current_iteration INTEGER NOT NULL DEFAULT 0,
+    max_iterations INTEGER NOT NULL DEFAULT 5,
+    request_json TEXT,
+    history_json TEXT,
+    error_message TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_tenant ON agent_tasks(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);

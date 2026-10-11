@@ -42,11 +42,31 @@ public class AgentToolOrchestrator {
         this(new ToolRegistry(), new ToolActionGatekeeper());
     }
 
+    @FunctionalInterface
+    public interface CheckpointListener {
+        void onCheckpoint(int currentIteration, List<ChatMessage> conversationHistory);
+    }
+
     public ChatCompletionResponse runLoop(
             LlmClient llmClient,
             ChatCompletionRequest initialRequest,
             String tenantId,
             int maxIterations
+    ) {
+        List<ChatMessage> conversationHistory = new ArrayList<>(
+                initialRequest.messages() != null ? initialRequest.messages() : Collections.emptyList()
+        );
+        return runLoopWithCheckpoint(llmClient, initialRequest, conversationHistory, tenantId, 0, maxIterations, null);
+    }
+
+    public ChatCompletionResponse runLoopWithCheckpoint(
+            LlmClient llmClient,
+            ChatCompletionRequest initialRequest,
+            List<ChatMessage> existingHistory,
+            String tenantId,
+            int startIteration,
+            int maxIterations,
+            CheckpointListener checkpointListener
     ) {
         if (llmClient == null) {
             throw new IllegalArgumentException("LlmClient must not be null");
@@ -56,12 +76,13 @@ public class AgentToolOrchestrator {
         }
 
         List<ChatMessage> conversationHistory = new ArrayList<>(
-                initialRequest.messages() != null ? initialRequest.messages() : Collections.emptyList()
+                existingHistory != null && !existingHistory.isEmpty() ? existingHistory :
+                        (initialRequest.messages() != null ? initialRequest.messages() : Collections.emptyList())
         );
 
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
-        int iteration = 0;
+        int iteration = startIteration;
 
         ChatCompletionResponse lastResponse = null;
 
@@ -145,6 +166,11 @@ public class AgentToolOrchestrator {
 
                 // Append tool role response to conversation
                 conversationHistory.add(ChatMessage.tool(callId, executionResult));
+            }
+
+            // Checkpoint callback after each turn
+            if (checkpointListener != null) {
+                checkpointListener.onCheckpoint(iteration, new ArrayList<>(conversationHistory));
             }
         }
 

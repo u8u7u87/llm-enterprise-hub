@@ -31,7 +31,8 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         // Allow health checks, admin management, or root/static endpoints without tenant auth
         return path.equals("/") || path.startsWith("/index.html") || path.startsWith("/static") ||
                path.endsWith(".html") || path.endsWith(".js") || path.endsWith(".css") ||
-               path.startsWith("/actuator") || path.equals("/error") || path.startsWith("/v1/admin");
+               path.startsWith("/actuator") || path.equals("/error") || path.startsWith("/v1/admin") ||
+               path.startsWith("/v1/agent/tasks");
     }
 
     @Override

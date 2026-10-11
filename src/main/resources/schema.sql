@@ -10,3 +10,20 @@ CREATE TABLE IF NOT EXISTS tenants (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenants_api_key ON tenants(api_key);
+
+CREATE TABLE IF NOT EXISTS system_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    minute_bucket TEXT NOT NULL,
+    total_requests INTEGER NOT NULL DEFAULT 0,
+    successful_requests INTEGER NOT NULL DEFAULT 0,
+    failed_requests INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    saved_tokens INTEGER NOT NULL DEFAULT 0,
+    l1_hits INTEGER NOT NULL DEFAULT 0,
+    l2_hits INTEGER NOT NULL DEFAULT 0,
+    avg_latency_ms REAL NOT NULL DEFAULT 0.0,
+    violations_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_minute ON system_metrics(minute_bucket);

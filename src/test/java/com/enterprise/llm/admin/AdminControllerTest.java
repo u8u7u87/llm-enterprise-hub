@@ -38,6 +38,9 @@ class AdminControllerTest {
     @MockBean
     private com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
 
+    @MockBean
+    private com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
+
     @BeforeEach
     void setUp() {
         when(adminProperties.getSecretKey()).thenReturn("admin-secret-key");

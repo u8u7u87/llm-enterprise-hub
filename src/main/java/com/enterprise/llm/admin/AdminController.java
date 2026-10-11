@@ -2,6 +2,7 @@ package com.enterprise.llm.admin;
 
 import com.enterprise.llm.tenant.TenantEntity;
 import com.enterprise.llm.tenant.TenantRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -17,15 +18,27 @@ public class AdminController {
     private final AdminProperties adminProperties;
     private final TenantRepository tenantRepository;
     private final AnalyticsService analyticsService;
+    private final com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
+
+    @Autowired
+    public AdminController(
+            AdminProperties adminProperties,
+            TenantRepository tenantRepository,
+            AnalyticsService analyticsService,
+            @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
+    ) {
+        this.adminProperties = adminProperties;
+        this.tenantRepository = tenantRepository;
+        this.analyticsService = analyticsService;
+        this.metricsRecordService = metricsRecordService;
+    }
 
     public AdminController(
             AdminProperties adminProperties,
             TenantRepository tenantRepository,
             AnalyticsService analyticsService
     ) {
-        this.adminProperties = adminProperties;
-        this.tenantRepository = tenantRepository;
-        this.analyticsService = analyticsService;
+        this(adminProperties, tenantRepository, analyticsService, null);
     }
 
     private ResponseEntity<?> verifyAdminKey(String adminKey) {
@@ -94,5 +107,19 @@ public class AdminController {
         if (authCheck != null) return authCheck;
 
         return ResponseEntity.ok(analyticsService.getOverview());
+    }
+
+    @GetMapping("/metrics/timeline")
+    public Object getMetricsTimeline(
+            @RequestHeader(value = "X-Admin-Key", required = false) String adminKey,
+            @RequestParam(value = "limit", defaultValue = "30") int limit
+    ) {
+        var authCheck = verifyAdminKey(adminKey);
+        if (authCheck != null) return authCheck;
+
+        if (metricsRecordService != null) {
+            return ResponseEntity.ok(metricsRecordService.getTimeline(limit));
+        }
+        return ResponseEntity.ok(List.of());
     }
 }

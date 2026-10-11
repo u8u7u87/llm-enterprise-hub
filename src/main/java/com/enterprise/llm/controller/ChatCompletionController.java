@@ -35,6 +35,7 @@ public class ChatCompletionController {
     private final TokenEstimator tokenEstimator;
     private final TenantQuotaService tenantQuotaService;
     private final CacheEngine cacheEngine;
+    private final com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
 
     @Autowired
     public ChatCompletionController(
@@ -43,7 +44,8 @@ public class ChatCompletionController {
             OutputGuardrailService outputGuardrailService,
             TokenEstimator tokenEstimator,
             TenantQuotaService tenantQuotaService,
-            CacheEngine cacheEngine
+            CacheEngine cacheEngine,
+            @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
     ) {
         this.chatExecutionService = chatExecutionService;
         this.promptGuardrailService = promptGuardrailService;
@@ -51,21 +53,38 @@ public class ChatCompletionController {
         this.tokenEstimator = tokenEstimator;
         this.tenantQuotaService = tenantQuotaService;
         this.cacheEngine = cacheEngine;
+        this.metricsRecordService = metricsRecordService;
+    }
+
+    public ChatCompletionController(
+            ChatExecutionService chatExecutionService,
+            PromptGuardrailService promptGuardrailService,
+            OutputGuardrailService outputGuardrailService,
+            TokenEstimator tokenEstimator,
+            TenantQuotaService tenantQuotaService,
+            CacheEngine cacheEngine
+    ) {
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null);
     }
 
     public ChatCompletionController(
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService
     ) {
-        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null);
+        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null);
     }
 
     @PostMapping("/completions")
     public Object createChatCompletion(@RequestBody ChatCompletionRequest request) {
+        long startMs = System.currentTimeMillis();
+
         // 1. Validate prompt safety against injections
         if (request.messages() != null) {
             for (var msg : request.messages()) {
                 if (!promptGuardrailService.isSafe(msg.content())) {
+                    if (metricsRecordService != null) {
+                        metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
+                    }
                     return ResponseEntity.badRequest()
                             .contentType(MediaType.APPLICATION_JSON)
                             .body(Map.of("error", "Security violation: Potential prompt injection detected"));
@@ -77,6 +96,11 @@ public class ChatCompletionController {
         if (cacheEngine != null) {
             var cached = cacheEngine.lookup(request);
             if (cached.isPresent()) {
+                long latency = System.currentTimeMillis() - startMs;
+                int saved = (cached.get().usage() != null && cached.get().usage().totalTokens() != null) ? cached.get().usage().totalTokens() : 0;
+                if (metricsRecordService != null) {
+                    metricsRecordService.record(true, latency, 0, saved, true, false, false);
+                }
                 if (Boolean.TRUE.equals(request.stream())) {
                     return chatExecutionService.emitCachedStream(cached.get());
                 } else {
@@ -96,6 +120,9 @@ public class ChatCompletionController {
             try {
                 reservation = tenantQuotaService.tryReserve(tenant.getId(), estimated);
             } catch (QuotaExceededException e) {
+                if (metricsRecordService != null) {
+                    metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
+                }
                 return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(Map.of("status", 429, "error", "Rate limit or daily token quota exceeded"));
@@ -106,29 +133,41 @@ public class ChatCompletionController {
         if (Boolean.TRUE.equals(request.stream())) {
             return chatExecutionService.executeStream(request, reservation);
         } else {
-            ChatCompletionResponse response = chatExecutionService.executeSync(request, reservation);
-            if (response != null && response.choices() != null && outputGuardrailService != null) {
-                List<ChatCompletionResponse.Choice> sanitizedChoices = response.choices().stream()
-                        .map(choice -> {
-                            if (choice.message() != null && choice.message().content() != null) {
-                                String clean = outputGuardrailService.sanitize(choice.message().content());
-                                return new ChatCompletionResponse.Choice(
-                                        choice.index(),
-                                        new ChatMessage(choice.message().role(), clean),
-                                        choice.finishReason()
-                                );
-                            }
-                            return choice;
-                        })
-                        .toList();
-                response = new ChatCompletionResponse(
-                        response.id(), response.object(), response.created(),
-                        response.model(), sanitizedChoices, response.usage()
-                );
+            try {
+                ChatCompletionResponse response = chatExecutionService.executeSync(request, reservation);
+                long latency = System.currentTimeMillis() - startMs;
+                int usedTokens = (response != null && response.usage() != null && response.usage().totalTokens() != null) ? response.usage().totalTokens() : 0;
+                if (metricsRecordService != null) {
+                    metricsRecordService.record(true, latency, usedTokens, 0, false, false, false);
+                }
+                if (response != null && response.choices() != null && outputGuardrailService != null) {
+                    List<ChatCompletionResponse.Choice> sanitizedChoices = response.choices().stream()
+                            .map(choice -> {
+                                if (choice.message() != null && choice.message().content() != null) {
+                                    String clean = outputGuardrailService.sanitize(choice.message().content());
+                                    return new ChatCompletionResponse.Choice(
+                                            choice.index(),
+                                            new ChatMessage(choice.message().role(), clean),
+                                            choice.finishReason()
+                                    );
+                                }
+                                return choice;
+                            })
+                            .toList();
+                    response = new ChatCompletionResponse(
+                            response.id(), response.object(), response.created(),
+                            response.model(), sanitizedChoices, response.usage()
+                    );
+                }
+                return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(response);
+            } catch (Exception ex) {
+                if (metricsRecordService != null) {
+                    metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, false);
+                }
+                throw ex;
             }
-            return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(response);
         }
     }
 }

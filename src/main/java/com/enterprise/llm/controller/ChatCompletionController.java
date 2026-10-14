@@ -36,6 +36,7 @@ public class ChatCompletionController {
     private final TenantQuotaService tenantQuotaService;
     private final CacheEngine cacheEngine;
     private final com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
+    private final com.enterprise.llm.rag.RagPipelineService ragPipelineService;
 
     @Autowired
     public ChatCompletionController(
@@ -45,7 +46,8 @@ public class ChatCompletionController {
             TokenEstimator tokenEstimator,
             TenantQuotaService tenantQuotaService,
             CacheEngine cacheEngine,
-            @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
+            @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService,
+            @Autowired(required = false) com.enterprise.llm.rag.RagPipelineService ragPipelineService
     ) {
         this.chatExecutionService = chatExecutionService;
         this.promptGuardrailService = promptGuardrailService;
@@ -54,6 +56,19 @@ public class ChatCompletionController {
         this.tenantQuotaService = tenantQuotaService;
         this.cacheEngine = cacheEngine;
         this.metricsRecordService = metricsRecordService;
+        this.ragPipelineService = ragPipelineService;
+    }
+
+    public ChatCompletionController(
+            ChatExecutionService chatExecutionService,
+            PromptGuardrailService promptGuardrailService,
+            OutputGuardrailService outputGuardrailService,
+            TokenEstimator tokenEstimator,
+            TenantQuotaService tenantQuotaService,
+            CacheEngine cacheEngine,
+            com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
+    ) {
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, metricsRecordService, null);
     }
 
     public ChatCompletionController(
@@ -64,14 +79,14 @@ public class ChatCompletionController {
             TenantQuotaService tenantQuotaService,
             CacheEngine cacheEngine
     ) {
-        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null);
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null, null);
     }
 
     public ChatCompletionController(
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService
     ) {
-        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null);
+        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null, null);
     }
 
     @PostMapping("/completions")
@@ -92,16 +107,24 @@ public class ChatCompletionController {
             }
         }
 
-        // 2. Check Two-Level Cache (L1/L2)
+        // 2. Pre-inference RAG Retrieval Pipeline (Tenant-isolated search + Context Augmentation)
+        TenantEntity tenant = TenantSecurityContext.getCurrentTenant();
+        String currentTenantId = tenant != null ? tenant.getId() : "default";
+        ChatCompletionRequest effectiveRequest = request;
+        if (ragPipelineService != null) {
+            effectiveRequest = ragPipelineService.processAndAugment(request, currentTenantId);
+        }
+
+        // 3. Check Two-Level Cache (L1/L2)
         if (cacheEngine != null) {
-            var cached = cacheEngine.lookup(request);
+            var cached = cacheEngine.lookup(effectiveRequest);
             if (cached.isPresent()) {
                 long latency = System.currentTimeMillis() - startMs;
                 int saved = (cached.get().usage() != null && cached.get().usage().totalTokens() != null) ? cached.get().usage().totalTokens() : 0;
                 if (metricsRecordService != null) {
                     metricsRecordService.record(true, latency, 0, saved, true, false, false);
                 }
-                if (Boolean.TRUE.equals(request.stream())) {
+                if (Boolean.TRUE.equals(effectiveRequest.stream())) {
                     return chatExecutionService.emitCachedStream(cached.get());
                 } else {
                     return ResponseEntity.ok()
@@ -112,11 +135,10 @@ public class ChatCompletionController {
             }
         }
 
-        // 3. Pre-flight Token Quota Reservation
-        TenantEntity tenant = TenantSecurityContext.getCurrentTenant();
+        // 4. Pre-flight Token Quota Reservation (Accurately covers augmented RAG tokens)
         QuotaReservation reservation = null;
         if (tenant != null && tenantQuotaService != null) {
-            int estimated = tokenEstimator.estimateTotalReservationTokens(request.messages(), request.maxTokens());
+            int estimated = tokenEstimator.estimateTotalReservationTokens(effectiveRequest.messages(), effectiveRequest.maxTokens());
             try {
                 reservation = tenantQuotaService.tryReserve(tenant.getId(), estimated);
             } catch (QuotaExceededException e) {
@@ -129,12 +151,12 @@ public class ChatCompletionController {
             }
         }
 
-        // 4. Execution
-        if (Boolean.TRUE.equals(request.stream())) {
-            return chatExecutionService.executeStream(request, reservation);
+        // 5. Execution
+        if (Boolean.TRUE.equals(effectiveRequest.stream())) {
+            return chatExecutionService.executeStream(effectiveRequest, reservation);
         } else {
             try {
-                ChatCompletionResponse response = chatExecutionService.executeSync(request, reservation);
+                ChatCompletionResponse response = chatExecutionService.executeSync(effectiveRequest, reservation);
                 long latency = System.currentTimeMillis() - startMs;
                 int usedTokens = (response != null && response.usage() != null && response.usage().totalTokens() != null) ? response.usage().totalTokens() : 0;
                 if (metricsRecordService != null) {

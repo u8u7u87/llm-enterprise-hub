@@ -65,6 +65,10 @@ public class MilvusVectorStore implements VectorStore {
                     .add(chunk);
         }
 
+        if (!isMilvusEnabled()) {
+            return;
+        }
+
         try {
             List<Map<String, Object>> data = new ArrayList<>();
             for (DocumentChunk chunk : chunks) {
@@ -122,8 +126,9 @@ public class MilvusVectorStore implements VectorStore {
             return Collections.emptyList();
         }
 
-        try {
-            List<Float> vecList = new ArrayList<>(queryVector.length);
+        if (isMilvusEnabled()) {
+            try {
+                List<Float> vecList = new ArrayList<>(queryVector.length);
             for (float f : queryVector) {
                 vecList.add(f);
             }
@@ -173,6 +178,7 @@ public class MilvusVectorStore implements VectorStore {
         } catch (Exception e) {
             log.debug("Remote Milvus search not available, using in-memory cosine fallback: {}", e.getMessage());
         }
+    }
 
         // Resilient in-memory fallback with strict tenant isolation and cosine similarity
         List<DocumentChunk> tenantChunks = inMemoryStore.get(tenantId);
@@ -218,6 +224,10 @@ public class MilvusVectorStore implements VectorStore {
             }
         }
 
+        if (!isMilvusEnabled()) {
+            return;
+        }
+
         try {
             String filterExpr = "tenant_id == \"" + tenantId + "\" and doc_name == \"" + docName + "\"";
             Map<String, Object> body = Map.of(
@@ -247,6 +257,10 @@ public class MilvusVectorStore implements VectorStore {
         }
         inMemoryStore.remove(tenantId);
 
+        if (!isMilvusEnabled()) {
+            return;
+        }
+
         try {
             String filterExpr = "tenant_id == \"" + tenantId + "\"";
             Map<String, Object> body = Map.of(
@@ -267,6 +281,10 @@ public class MilvusVectorStore implements VectorStore {
             httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.discarding());
         } catch (Exception ignored) {
         }
+    }
+
+    private boolean isMilvusEnabled() {
+        return milvusEndpoint != null && !milvusEndpoint.isBlank() && !"disabled".equalsIgnoreCase(milvusEndpoint);
     }
 
     private double computeCosineSimilarity(float[] v1, float[] v2) {

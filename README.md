@@ -206,3 +206,30 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   - **查询任务详情**：`GET /v1/agent/tasks/{id}`（需 `X-Admin-Key`）
   - **断点重新拉起 (Resume)**：`POST /v1/agent/tasks/{id}/resume`（需 `X-Admin-Key`）
 
+---
+
+## 阶段六企业级前置 RAG 检索流水线与 Milvus 集成 (Phase 6 Evolution)
+
+### 支柱 1：网关层透明前置检索流水线 (`RagPipelineService` & `PromptAugmentor`)
+- **零侵入与透明增强**：在网关接入层，自动从用户会话最后一条请求提取 query，向量化后在向量库中执行相似度召回，并将最相关的知识库文档切片（Top-K，带得分阈值过滤）以高结构化 Markdown 形式自动注入 System Prompt。
+- **配额精确预扣**：前置 RAG 注入产生的 Prompt 增量 Token，在进入 LLM 路由前便已被 Token 预估器精确计算并纳入租户配额预扣流水中，杜绝知识库注入导致的额度超用。
+
+### 支柱 2：严格多租户隔离与直连 Milvus 向量引擎 (`MilvusVectorStore`)
+- **原生 Milvus RESTful 集成**：支持直连企业级 Milvus 2.x 集群，原生调用 `/v2/vectordb/entities/insert` 与 `/v2/vectordb/entities/search`。
+- **强制跨租户物理与逻辑隔离**：检索时强制注入标量过滤表达式 `tenant_id == "${tenantId}"`，不同租户之间即使文档同名、向量高度相近也绝无可能越权召回。
+- **测试与离线环境透明降级**：未部署 Milvus 实例或配置 `milvus.endpoint=disabled` 时，底层自动激活内存余弦相似度检索索引，保障 CI/CD 与离线单机测试 100% 稳定运行。
+
+### 支柱 3：知识库管理与检索 API 控制面 (`KnowledgeBaseController`)
+针对业务租户暴露 OpenAI 风格的标准化知识库管理接口（需租户 `Authorization: Bearer <tenant_key>` 鉴权）：
+- **上传并切片入库**：`POST /v1/knowledge/documents`
+  - 请求体：`{ "docName": "product_faq.md", "content": "...", "metadata": {} }`
+  - 核心处理：通过 `TextChunker` 按句子边界和自然标点智能分块（支持 chunk-size 与 overlap 重叠滑动窗口），批量调用 Embedding 客户端生成向量并入库。
+- **知识语义检索**：`POST /v1/knowledge/search`
+  - 请求体：`{ "query": "如何配置退款?", "topK": 3, "minScore": 0.6 }`
+  - 返回：按余弦相关度排序的匹配切片列表（包含得分、文档名、切片文本与元数据）。
+- **级联清理删除**：`DELETE /v1/knowledge/documents/{docName}`
+  - 按当前租户与文档名精准级联清除该文档的所有分块向量与索引。
+
+### 支柱 4：多租户两级智能缓存隔离安全防线
+- **租户隔离缓存命名空间**：升级 `CacheEngine`，无论 L1 精准 Hash 还是 L2 Jaccard 语义缓存均强制绑定当前租户标识，彻底阻断利用语义缓存窃取其他租户知识库专属输出的跨租户数据泄漏隐患。
+

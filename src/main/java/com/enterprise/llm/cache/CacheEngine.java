@@ -1,8 +1,10 @@
 package com.enterprise.llm.cache;
 
+import com.enterprise.llm.auth.TenantSecurityContext;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
+import com.enterprise.llm.tenant.TenantEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -34,11 +36,18 @@ public class CacheEngine {
     }
 
     public Optional<ChatCompletionResponse> lookup(ChatCompletionRequest request) {
+        TenantEntity tenant = TenantSecurityContext.getCurrentTenant();
+        String tenantId = tenant != null ? tenant.getId() : "default";
+        return lookup(request, tenantId);
+    }
+
+    public Optional<ChatCompletionResponse> lookup(ChatCompletionRequest request, String tenantId) {
         if (!properties.isEnabled() || request == null) {
             return Optional.empty();
         }
 
-        String key = computeKey(request);
+        String effectiveTenantId = tenantId != null ? tenantId : "default";
+        String key = computeKey(request, effectiveTenantId);
 
         // 1. L1 Exact Hash Lookup
         CacheEntry l1Entry = l1Map.get(key);
@@ -54,7 +63,7 @@ public class CacheEngine {
             }
         }
 
-        // 2. L2 Semantic Similarity Lookup
+        // 2. L2 Semantic Similarity Lookup (strictly scoped by tenantId)
         String prompt = extractPromptText(request);
         if (!prompt.isBlank() && !semanticEntries.isEmpty()) {
             Set<String> queryWords = extractWordTokens(prompt);
@@ -65,6 +74,9 @@ public class CacheEngine {
                 if (entry.isExpired()) {
                     semanticEntries.remove(entry);
                     l1Map.remove(entry.key());
+                    continue;
+                }
+                if (!Objects.equals(entry.tenantId(), effectiveTenantId)) {
                     continue;
                 }
                 Set<String> targetWords = extractWordTokens(entry.promptText());
@@ -88,6 +100,12 @@ public class CacheEngine {
     }
 
     public void put(ChatCompletionRequest request, ChatCompletionResponse response) {
+        TenantEntity tenant = TenantSecurityContext.getCurrentTenant();
+        String tenantId = tenant != null ? tenant.getId() : "default";
+        put(request, response, tenantId);
+    }
+
+    public void put(ChatCompletionRequest request, ChatCompletionResponse response, String tenantId) {
         if (!properties.isEnabled() || request == null || response == null) {
             return;
         }
@@ -98,12 +116,13 @@ public class CacheEngine {
             semanticEntries.clear();
         }
 
-        String key = computeKey(request);
+        String effectiveTenantId = tenantId != null ? tenantId : "default";
+        String key = computeKey(request, effectiveTenantId);
         String prompt = extractPromptText(request);
         long now = System.currentTimeMillis();
         long expireAt = now + (properties.getTtlSeconds() * 1000L);
 
-        CacheEntry entry = new CacheEntry(key, prompt, response, now, expireAt);
+        CacheEntry entry = new CacheEntry(key, effectiveTenantId, prompt, response, now, expireAt);
         l1Map.put(key, entry);
         semanticEntries.add(entry);
     }
@@ -135,8 +154,9 @@ public class CacheEngine {
         }
     }
 
-    private String computeKey(ChatCompletionRequest request) {
+    private String computeKey(ChatCompletionRequest request, String tenantId) {
         StringBuilder sb = new StringBuilder();
+        sb.append(tenantId != null ? tenantId : "default").append("|");
         sb.append(request.model()).append("|");
         sb.append(request.temperature()).append("|");
         if (request.messages() != null) {

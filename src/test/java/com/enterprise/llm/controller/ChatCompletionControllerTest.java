@@ -150,4 +150,22 @@ class ChatCompletionControllerTest {
         emitter.completeWithError(new java.io.IOException("Client disconnected"));
         assertThat(cancelled.get()).isTrue();
     }
+
+    @Test
+    void shouldRejectEmptyMessages() throws Exception {
+        Mockito.when(tenantService.authenticateApiKey(any()))
+                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+        Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+
+        String json = """
+                {"model": "qwen2.5:0.5b", "messages": []}
+                """;
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .header("X-API-Key", "k")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("messages must not be empty")));
+    }
 }

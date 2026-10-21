@@ -1,11 +1,15 @@
+# ==============================================================================
+# LLM Enterprise Hub - 生产级核心配置字典
+# ==============================================================================
+
 spring:
   application:
     name: llm-enterprise-hub
   threads:
     virtual:
-      enabled: true
+      enabled: true                  # 启用 Java 21 虚拟线程支持高并发吞吐
   datasource:
-    url: jdbc:sqlite:hub-data.db
+    url: jdbc:sqlite:hub-data.db     # SQLite 本地持久化数据库路径
     driver-class-name: org.sqlite.JDBC
   sql:
     init:
@@ -13,16 +17,40 @@ spring:
       schema-locations: classpath:schema.sql
 
 server:
-  port: 8080
+  port: 8080                         # 服务监听端口
 
+# ------------------------------------------------------------------------------
+# 1. 大模型推理引擎配置 (Primary & Fallback)
+# ------------------------------------------------------------------------------
 llm:
   provider:
-    base-url: "http://localhost:11434/v1"
-    api-key: "ollama"
-    model: "qwen2.5:0.5b"
-    timeout-seconds: 60
+    base-url: "http://localhost:11434/v1"   # 主模型 API 端点 (OpenAI 兼容 / Ollama / 云端)
+    api-key: "ollama"                       # 主模型 API Key
+    model: "qwen2.5:0.5b"                   # 主模型名称
+    timeout-seconds: 60                     # 请求超时时间（秒）
+  fallback:
+    base-url: "http://localhost:11434/v1"   # 熔断降级模型 API 端点
+    api-key: "ollama"                       # 降级模型 API Key
+    model: "qwen2.5:0.5b"                   # 降级模型名称
 
+# ------------------------------------------------------------------------------
+# 2. 全链路双向安全护栏配置 (Prompt Guardrail, DLP, Tool Isolation)
+# ------------------------------------------------------------------------------
 security:
+  # 提示词注入防护 (Ingress Guardrail)
+  guardrail:
+    prompt:
+      enabled: true
+      patterns:
+        - "(?i)ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions"
+        - "(?i)disregard\\s+(all\\s+)?(previous|prior|above)\\s+instructions"
+        - "(?i)you\\s+are\\s+now\\s+in\\s+dan\\s+mode"
+        - "(?i)reveal\\s+your\\s+(system\\s+prompt|instructions)"
+        - "(?i)output\\s+(all\\s+)?passwords?"
+        - "(?i)jailbreak"
+        - "(?i)system\\s*:\\s*override"
+
+  # 数据防泄漏脱敏 (Egress DLP Guardrail)
   dlp:
     enabled: true
     rules:
@@ -56,6 +84,8 @@ security:
         mask-type: REPLACE_TAG
         replacement: "[REDACTED_EMAIL]"
         enabled: true
+
+  # Agent 工具调用安全沙箱与多租户隔离
   tools:
     enabled: true
     tenant-isolation-enabled: true
@@ -78,3 +108,35 @@ security:
       - "(?i)shutdown\\s+-h"
       - "(?i)reboot"
       - "(?i)kill\\s+-9\\s+1\\b"
+
+# ------------------------------------------------------------------------------
+# 3. 智能两级缓存配置 (L1 Exact Hash + L2 Semantic Jaccard)
+# ------------------------------------------------------------------------------
+cache:
+  enabled: true                     # 两级缓存总开关
+  ttl-seconds: 3600                 # 缓存条目存活时间（秒，默认 1 小时）
+  semantic-threshold: 0.88          # L2 语义相似度阈值 (0.0 ~ 1.0)
+  max-capacity: 10000               # 缓存最大条目数
+
+# ------------------------------------------------------------------------------
+# 4. 企业级 RAG 检索增强与 Milvus 向量库配置
+# ------------------------------------------------------------------------------
+rag:
+  enabled: true                     # RAG 前置检索流水线总开关
+  top-k: 3                          # 默认召回切片数量
+  min-score: 0.5                    # 最小相似度过滤阈值
+  embedding:
+    base-url: "http://localhost:11434/v1"  # 向量化服务端点 (OpenAI / Ollama)
+    api-key: "ollama"                      # 向量化服务 API Key
+    model: "bge-m3"                        # 向量化模型名称
+
+milvus:
+  endpoint: "http://127.0.0.1:19530"       # Milvus 2.x 集群 RESTful 端点 (设为 disabled 时走内存余弦检索)
+  collection: "enterprise_hub_rag"         # 向量集合名称
+  api-key: ""                              # Milvus 鉴权 Token (可选)
+
+# ------------------------------------------------------------------------------
+# 5. 管理员控制面与监控看板鉴权配置
+# ------------------------------------------------------------------------------
+admin:
+  secret-key: "test-admin-secret-key-12345"  # 管理员 X-Admin-Key

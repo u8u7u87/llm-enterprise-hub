@@ -90,20 +90,25 @@ public class ChatCompletionController {
     }
 
     @PostMapping("/completions")
-    public Object createChatCompletion(@RequestBody ChatCompletionRequest request) {
+    public Object createChatCompletion(@RequestBody(required = false) ChatCompletionRequest request) {
         long startMs = System.currentTimeMillis();
 
+        // 0. Boundary & Schema Validation
+        if (request == null || request.messages() == null || request.messages().isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("error", "Invalid request: messages must not be empty"));
+        }
+
         // 1. Validate prompt safety against injections
-        if (request.messages() != null) {
-            for (var msg : request.messages()) {
-                if (!promptGuardrailService.isSafe(msg.content())) {
-                    if (metricsRecordService != null) {
-                        metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
-                    }
-                    return ResponseEntity.badRequest()
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(Map.of("error", "Security violation: Potential prompt injection detected"));
+        for (var msg : request.messages()) {
+            if (!promptGuardrailService.isSafe(msg.content())) {
+                if (metricsRecordService != null) {
+                    metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
                 }
+                return ResponseEntity.badRequest()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of("error", "Security violation: Potential prompt injection detected"));
             }
         }
 

@@ -19,6 +19,7 @@ public class LlmSpan {
 
     private int promptTokens;
     private int completionTokens;
+    private com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector = com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
 
     public LlmSpan(String name, TraceContext context, String model) {
         this.name = name;
@@ -26,18 +27,58 @@ public class LlmSpan {
         this.model = model;
     }
 
+    public LlmSpan setMetricsCollector(com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector) {
+        if (metricsCollector != null) {
+            this.metricsCollector = metricsCollector;
+        }
+        return this;
+    }
+
+    public com.enterprise.llm.metrics.LlmMetricsCollector getMetricsCollector() {
+        return metricsCollector;
+    }
+
     public void start(long startTimeMs) {
         this.startTimeMs = startTimeMs;
+        if (metricsCollector != null) {
+            try {
+                metricsCollector.recordActiveRequest(model, 1);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     public void recordFirstToken(long tokenTimeMs) {
         this.firstTokenTimeMs = tokenTimeMs;
     }
 
+    public void recordError(Throwable error) {
+        setAttribute("status", "error");
+        if (error != null) {
+            setAttribute("error_message", error.getMessage());
+        }
+    }
+
     public void finish(long endTimeMs, int promptTokens, int completionTokens) {
         this.endTimeMs = endTimeMs;
         this.promptTokens = promptTokens;
         this.completionTokens = completionTokens;
+
+        if (metricsCollector != null) {
+            try {
+                metricsCollector.recordActiveRequest(model, -1);
+                String tenantId = (context != null) ? context.tenantId() : null;
+                String status = "success";
+                Object statusAttr = attributes.get("status");
+                if (statusAttr != null && "error".equalsIgnoreCase(String.valueOf(statusAttr))) {
+                    status = "error";
+                }
+                Long ttft = (firstTokenTimeMs > 0 && startTimeMs > 0) ? (firstTokenTimeMs - startTimeMs) : null;
+                Double tps = (completionTokens > 0 && getTotalLatencyMs() > 0) ? getTokensPerSecond() : null;
+                metricsCollector.recordRequest(model, tenantId, status, getTotalLatencyMs(), ttft, tps, promptTokens, completionTokens);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     public long getTtftMs() {

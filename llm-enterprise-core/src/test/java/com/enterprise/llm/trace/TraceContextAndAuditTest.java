@@ -56,4 +56,41 @@ class TraceContextAndAuditTest {
         RequestAuditLogger.logAudit(span, 200);
         RequestAuditLogger.logAudit(span, 500, "Connection timed out");
     }
+
+    @Test
+    @DisplayName("Verify LlmSpan triggers metrics collector on start and finish")
+    void testLlmSpanMetricsTrigger() {
+        java.util.concurrent.atomic.AtomicInteger activeCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicBoolean recorded = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        com.enterprise.llm.metrics.LlmMetricsCollector mockCollector = new com.enterprise.llm.metrics.LlmMetricsCollector() {
+            @Override
+            public void recordRequest(String model, String tenantId, String status, long durationMs, Long ttftMs, Double tps, int promptTokens, int completionTokens) {
+                if ("deepseek-chat".equals(model) && "tenant-9".equals(tenantId) && "success".equals(status)) {
+                    recorded.set(true);
+                }
+            }
+
+            @Override
+            public void recordToolExecution(String toolName, String tenantId, String status, long durationMs) {}
+
+            @Override
+            public void recordActiveRequest(String model, int delta) {
+                activeCount.addAndGet(delta);
+            }
+        };
+
+        TraceContext ctx = TraceContext.createNew("tr-1", "tenant-9", "usr-1", "sess-1");
+        LlmSpan span = new LlmSpan("chat", ctx, "deepseek-chat");
+        span.setMetricsCollector(mockCollector);
+
+        span.start(2000L);
+        assertThat(activeCount.get()).isEqualTo(1);
+
+        span.recordFirstToken(2100L);
+        span.finish(2500L, 20, 40);
+
+        assertThat(activeCount.get()).isEqualTo(0);
+        assertThat(recorded.get()).isTrue();
+    }
 }

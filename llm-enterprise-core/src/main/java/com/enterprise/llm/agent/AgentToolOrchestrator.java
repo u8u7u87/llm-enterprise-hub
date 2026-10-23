@@ -27,6 +27,7 @@ public class AgentToolOrchestrator {
 
     private final ToolRegistry toolRegistry;
     private final ToolActionGatekeeper toolActionGatekeeper;
+    private com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector = com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
 
     @Autowired
     public AgentToolOrchestrator(ToolRegistry toolRegistry, ToolActionGatekeeper toolActionGatekeeper) {
@@ -40,6 +41,17 @@ public class AgentToolOrchestrator {
 
     public AgentToolOrchestrator() {
         this(new ToolRegistry(), new ToolActionGatekeeper());
+    }
+
+    @Autowired(required = false)
+    public void setMetricsCollector(com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector) {
+        if (metricsCollector != null) {
+            this.metricsCollector = metricsCollector;
+        }
+    }
+
+    public com.enterprise.llm.metrics.LlmMetricsCollector getMetricsCollector() {
+        return metricsCollector;
     }
 
     @FunctionalInterface
@@ -180,6 +192,8 @@ public class AgentToolOrchestrator {
 
         ToolAction action = new ToolAction(toolName, arguments);
         String executionResult;
+        String status = "success";
+        long startTime = System.currentTimeMillis();
 
         try {
             // 1. ToolActionGatekeeper validation (security & parameter tenant isolation)
@@ -192,18 +206,29 @@ public class AgentToolOrchestrator {
             if (registeredOpt.isPresent()) {
                 executionResult = registeredOpt.get().handler().execute(arguments);
             } else if (toolRegistry.hasTool(toolName)) {
+                status = "error";
                 executionResult = "Error: Tenant '" + tenantId + "' is not authorized to execute tool '" + toolName + "'.";
                 log.warn("Tenant '{}' unauthorized to execute restricted tool '{}'", tenantId, toolName);
             } else {
+                status = "error";
                 executionResult = "Error: Tool '" + toolName + "' is not registered.";
                 log.warn("Attempted to execute unregistered tool '{}'", toolName);
             }
         } catch (SecurityViolationException | CrossTenantViolationException e) {
+            status = "error";
             log.warn("Tool execution blocked by gatekeeper: {}", e.getMessage());
             executionResult = "Security policy violation: " + e.getMessage();
         } catch (Exception e) {
+            status = "error";
             log.error("Error executing tool '{}'", toolName, e);
             executionResult = "Tool execution failure: " + e.getMessage();
+        } finally {
+            if (metricsCollector != null) {
+                try {
+                    metricsCollector.recordToolExecution(toolName, tenantId, status, System.currentTimeMillis() - startTime);
+                } catch (Throwable ignored) {
+                }
+            }
         }
 
         return ChatMessage.tool(callId, executionResult);

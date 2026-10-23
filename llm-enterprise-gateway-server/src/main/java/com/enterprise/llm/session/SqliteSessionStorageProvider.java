@@ -25,10 +25,23 @@ public class SqliteSessionStorageProvider implements SessionStorageProvider {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final java.util.concurrent.locks.ReentrantLock writeLock = new java.util.concurrent.locks.ReentrantLock();
 
     public SqliteSessionStorageProvider(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = new ObjectMapper();
+    }
+
+    @jakarta.annotation.PostConstruct
+    public void initPragmas() {
+        try {
+            jdbcTemplate.execute("PRAGMA journal_mode = WAL;");
+            jdbcTemplate.execute("PRAGMA busy_timeout = 5000;");
+            jdbcTemplate.execute("PRAGMA synchronous = NORMAL;");
+            log.info("SQLite connection tuned with WAL mode, busy_timeout=5000ms, and synchronous=NORMAL");
+        } catch (Exception e) {
+            log.warn("Could not set SQLite pragmas: {}", e.getMessage());
+        }
     }
 
     @Override
@@ -36,42 +49,47 @@ public class SqliteSessionStorageProvider implements SessionStorageProvider {
         if (session == null || session.sessionId() == null) {
             return;
         }
-        String tenantId = session.tenantId() != null ? session.tenantId() : "default";
-        String metadataJson = "{}";
+        writeLock.lock();
         try {
-            if (session.metadata() != null && !session.metadata().isEmpty()) {
-                metadataJson = objectMapper.writeValueAsString(session.metadata());
+            String tenantId = session.tenantId() != null ? session.tenantId() : "default";
+            String metadataJson = "{}";
+            try {
+                if (session.metadata() != null && !session.metadata().isEmpty()) {
+                    metadataJson = objectMapper.writeValueAsString(session.metadata());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to serialize session metadata", e);
             }
-        } catch (Exception e) {
-            log.warn("Failed to serialize session metadata", e);
-        }
 
-        String sql = """
-                INSERT INTO chat_sessions (session_id, tenant_id, user_id, title, metadata_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    title = excluded.title,
-                    user_id = excluded.user_id,
-                    metadata_json = excluded.metadata_json,
-                    updated_at = excluded.updated_at
-                """;
+            String sql = """
+                    INSERT INTO chat_sessions (session_id, tenant_id, user_id, title, metadata_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        title = excluded.title,
+                        user_id = excluded.user_id,
+                        metadata_json = excluded.metadata_json,
+                        updated_at = excluded.updated_at
+                    """;
 
-        Timestamp createdAt = Timestamp.from(session.createdAt() != null ? session.createdAt() : Instant.now());
-        Timestamp updatedAt = Timestamp.from(session.updatedAt() != null ? session.updatedAt() : Instant.now());
+            Timestamp createdAt = Timestamp.from(session.createdAt() != null ? session.createdAt() : Instant.now());
+            Timestamp updatedAt = Timestamp.from(session.updatedAt() != null ? session.updatedAt() : Instant.now());
 
-        jdbcTemplate.update(
-                sql,
-                session.sessionId(),
-                tenantId,
-                session.userId(),
-                session.title(),
-                metadataJson,
-                createdAt,
-                updatedAt
-        );
+            jdbcTemplate.update(
+                    sql,
+                    session.sessionId(),
+                    tenantId,
+                    session.userId(),
+                    session.title(),
+                    metadataJson,
+                    createdAt,
+                    updatedAt
+            );
 
-        if (session.messages() != null && !session.messages().isEmpty()) {
-            appendMessages(tenantId, session.sessionId(), session.messages());
+            if (session.messages() != null && !session.messages().isEmpty()) {
+                doAppendMessages(tenantId, session.sessionId(), session.messages());
+            }
+        } finally {
+            writeLock.unlock();
         }
     }
 
@@ -179,16 +197,30 @@ public class SqliteSessionStorageProvider implements SessionStorageProvider {
         if (sessionId == null) {
             return;
         }
-        String tid = tenantId != null ? tenantId : "default";
-        jdbcTemplate.update("DELETE FROM chat_session_messages WHERE tenant_id = ? AND session_id = ?", tid, sessionId);
-        jdbcTemplate.update("DELETE FROM chat_sessions WHERE tenant_id = ? AND session_id = ?", tid, sessionId);
+        writeLock.lock();
+        try {
+            String tid = tenantId != null ? tenantId : "default";
+            jdbcTemplate.update("DELETE FROM chat_session_messages WHERE tenant_id = ? AND session_id = ?", tid, sessionId);
+            jdbcTemplate.update("DELETE FROM chat_sessions WHERE tenant_id = ? AND session_id = ?", tid, sessionId);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     @Override
-    public synchronized void appendMessages(String tenantId, String sessionId, List<ChatMessage> messages) {
+    public void appendMessages(String tenantId, String sessionId, List<ChatMessage> messages) {
         if (sessionId == null || messages == null || messages.isEmpty()) {
             return;
         }
+        writeLock.lock();
+        try {
+            doAppendMessages(tenantId, sessionId, messages);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private void doAppendMessages(String tenantId, String sessionId, List<ChatMessage> messages) {
         String tid = tenantId != null ? tenantId : "default";
 
         // Ensure session record exists

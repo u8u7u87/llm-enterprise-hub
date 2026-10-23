@@ -44,6 +44,7 @@ public class ChatExecutionService {
     private final ContextManager contextManager;
     private final TraceCollector traceCollector;
     private final com.enterprise.llm.session.SessionManager sessionManager;
+    private final com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector;
     private final ObjectMapper objectMapper;
 
     @Autowired
@@ -55,7 +56,8 @@ public class ChatExecutionService {
             @Autowired(required = false) AgentToolOrchestrator agentToolOrchestrator,
             @Autowired(required = false) ContextManager contextManager,
             @Autowired(required = false) TraceCollector traceCollector,
-            @Autowired(required = false) com.enterprise.llm.session.SessionManager sessionManager
+            @Autowired(required = false) com.enterprise.llm.session.SessionManager sessionManager,
+            @Autowired(required = false) com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector
     ) {
         this.failoverRoutingService = failoverRoutingService;
         this.tenantQuotaService = tenantQuotaService;
@@ -65,7 +67,21 @@ public class ChatExecutionService {
         this.contextManager = contextManager;
         this.traceCollector = traceCollector;
         this.sessionManager = sessionManager;
+        this.metricsCollector = metricsCollector != null ? metricsCollector : com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public ChatExecutionService(
+            FailoverRoutingService failoverRoutingService,
+            TenantQuotaService tenantQuotaService,
+            TokenEstimator tokenEstimator,
+            CacheEngine cacheEngine,
+            AgentToolOrchestrator agentToolOrchestrator,
+            ContextManager contextManager,
+            TraceCollector traceCollector,
+            com.enterprise.llm.session.SessionManager sessionManager
+    ) {
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, agentToolOrchestrator, contextManager, traceCollector, sessionManager, null);
     }
 
     public ChatExecutionService(
@@ -131,6 +147,9 @@ public class ChatExecutionService {
         long startTimeMs = System.currentTimeMillis();
         TraceContext traceCtx = TraceContext.getCurrent();
         LlmSpan span = new LlmSpan("chat_completion_sync", traceCtx, effectiveRequest.model());
+        if (metricsCollector != null) {
+            span.setMetricsCollector(metricsCollector);
+        }
         span.start(startTimeMs);
         span.setStream(false);
         if (effectiveRequest.tools() != null && !effectiveRequest.tools().isEmpty()) {
@@ -195,6 +214,7 @@ public class ChatExecutionService {
 
             return response;
         } catch (Exception e) {
+            span.recordError(e);
             long endTimeMs = System.currentTimeMillis();
             span.finish(endTimeMs, 0, 0);
             if (traceCollector != null) {
@@ -229,6 +249,9 @@ public class ChatExecutionService {
         long startTimeMs = System.currentTimeMillis();
         TraceContext traceCtx = TraceContext.getCurrent();
         LlmSpan span = new LlmSpan("chat_completion_stream", traceCtx, effectiveRequest.model());
+        if (metricsCollector != null) {
+            span.setMetricsCollector(metricsCollector);
+        }
         span.start(startTimeMs);
         span.setStream(true);
         final AtomicBoolean firstChunkRecorded = new AtomicBoolean(false);
@@ -331,6 +354,7 @@ public class ChatExecutionService {
                     }
                 },
                 ex -> {
+                    span.recordError(ex);
                     int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(effectiveRequest.messages()) : 0;
                     int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : 0;
                     if (tenantQuotaService != null && reservation != null) {

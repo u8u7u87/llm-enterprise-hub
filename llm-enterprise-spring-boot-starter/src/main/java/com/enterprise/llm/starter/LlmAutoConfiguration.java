@@ -206,6 +206,12 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator.class)
+    public com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator agentSwarmOrchestrator() {
+        return new com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator();
+    }
+
+    @Bean
     @ConditionalOnMissingBean(AgentTaskStorageProvider.class)
     public AgentTaskStorageProvider agentTaskStorageProvider() {
         return new InMemoryAgentTaskStorageProvider();

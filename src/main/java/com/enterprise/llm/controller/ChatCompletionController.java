@@ -17,10 +17,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.enterprise.llm.exception.LlmException;
 
 import java.util.List;
 import java.util.Map;
@@ -189,6 +191,11 @@ public class ChatCompletionController {
                 return ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(response);
+            } catch (LlmException ex) {
+                if (metricsRecordService != null) {
+                    metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, false);
+                }
+                return handleLlmException(ex);
             } catch (Exception ex) {
                 if (metricsRecordService != null) {
                     metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, false);
@@ -196,5 +203,22 @@ public class ChatCompletionController {
                 throw ex;
             }
         }
+    }
+
+    @ExceptionHandler(LlmException.class)
+    public ResponseEntity<Map<String, Object>> handleLlmException(LlmException ex) {
+        HttpStatus status = HttpStatus.resolve(ex.getStatusCode());
+        if (status == null) {
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        Map<String, Object> errorMap = new java.util.LinkedHashMap<>();
+        errorMap.put("message", ex.getMessage() != null ? ex.getMessage() : "Upstream LLM error");
+        errorMap.put("type", ex.getErrorType() != null ? ex.getErrorType() : "llm_error");
+        errorMap.put("code", ex.getErrorCode() != null ? ex.getErrorCode() : "upstream_error");
+        errorMap.put("param", null);
+
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("error", errorMap));
     }
 }

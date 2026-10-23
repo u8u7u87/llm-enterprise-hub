@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-114%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-133%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -23,6 +23,8 @@
   - [5. 企业级 ReAct Agent 调度与断点续跑](#5-企业级-react-agent-调度与断点续跑)
   - [6. 前置 RAG 检索流水线与 Milvus 向量引擎](#6-前置-rag-检索流水线与-milvus-向量引擎)
   - [7. 零依赖内嵌现代 Web 运维监控看板](#7-零依赖内嵌现代-web-运维监控看板)
+  - [8. 上下文预算管理、修剪与语义提炼 (Context Distillation)](#8-上下文预算管理修剪与语义提炼-context-distillation)
+  - [9. 大厂生产级大模型异常分级体系与故障自愈](#9-大厂生产级大模型异常分级体系与故障自愈)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -119,12 +121,26 @@ src/main/java/com/enterprise/llm/
 │   └── CacheProperties.java             # 缓存配置属性 (cache.enabled, semantic-threshold, ttl)
 ├── client/                              # 上游模型 HTTP 适配层
 │   ├── LlmClient.java                   # 统一大模型客户端抽象接口
+│   ├── LlmErrorParser.java              # 上游错误响应语义解析器 (OpenAI 错误体映射)
 │   ├── OpenAiCompatibleLlmClient.java   # OpenAI 规范适配器 (支持普通响应、SSE 打字机流式、反压取消)
 │   └── StreamCancellationHandle.java    # 流式反压取消句柄
 ├── config/                              # Spring 容器配置与 Bean 自动装配
 │   └── LlmConfiguration.java            # Primary/Fallback LLM 及 EmbeddingClient 生产装配
+├── context/                             # 企业级长上下文管理、修剪与语义提炼
+│   ├── ContextBudgetProperties.java     # 预算窗口与压缩水位线配置
+│   ├── ContextDistiller.java            # 会话语义提炼抽象接口
+│   ├── ContextManager.java              # 三阶段治理引擎与爆窗现场自愈压缩
+│   └── HeuristicContextDistiller.java   # 启发式高性能本地会话摘要提炼器
 ├── controller/                          # 网关流量核心入口
-│   └── ChatCompletionController.java    # /v1/chat/completions 兼容接口与全流程守门调度
+│   └── ChatCompletionController.java    # /v1/chat/completions 兼容接口、全局异常标准化与调度
+├── exception/                           # 大厂级大模型强类型异常分类体系
+│   ├── LlmException.java                # 异常顶层抽象基类 (statusCode, errorCode, errorType, retryable)
+│   ├── LlmAuthenticationException.java  # 401/403 鉴权失败与凭证失效 (非重试)
+│   ├── LlmContentFilterException.java   # 400 内容安全拦截与合规审查 (非重试快速阻断)
+│   ├── LlmContextLengthExceededException.java # 400 上下文超限 (可现场自愈重试)
+│   ├── LlmInvalidRequestException.java  # 400 请求格式与参数校验错误
+│   ├── LlmRateLimitException.java       # 429 频率超限 (携带 Retry-After 毫秒)
+│   └── LlmServerException.java          # 5xx 上游宕机与网络超时抖动 (重试/熔断切换)
 ├── guard/                               # 全链路安全防护体系
 │   ├── CrossTenantViolationException.java# 跨租户越权异常
 │   ├── OutputGuardrailService.java      # 出口 DLP 敏感信息脱敏处理器
@@ -255,6 +271,23 @@ src/main/java/com/enterprise/llm/
   - 系统吞吐量 (RPM) 与平均延迟趋势双轴时序折线图（按分钟滑动窗口聚合）；
   - 缓存与安全拦截分布饼图；
   - ReAct Agent 任务调度控制台（实时展示任务状态机流转，支持在任务挂起时一键交互触发断点恢复）。
+
+### 8. 上下文预算管理、修剪与语义提炼 (Context Distillation)
+- **增量治理水位线 (High-Water Mark)**：通过 `ContextBudgetProperties` 设定窗口上限（如 8192 或 32768）与触发比率（默认 0.75）。当 `currentTokens + reservedTokens > maxTokens * ratio` 时，启动无感三阶段压缩，彻底避免长会话 Token 消耗呈二次方爆炸与突破大模型硬上限。
+- **三阶段递进治理流水线**：
+  1. **Phase 1: 工具冗余输出修剪 (`pruneOldToolMessages`)**：超过两轮以上的历史 `role: tool` 消息，若字符长度超过阈值自动折叠为摘要标签 `{"status": "success", "summary": "[Earlier tool output pruned for context token efficiency, length: N chars]"}`，节省 70%+ 工具大 JSON 消耗；
+  2. **Phase 2: 智能滑动窗口保活 (`applySlidingWindow`)**：遵循“System 角色定义首因效应”与“最新上下文近因效应”双重保护守则，**绝对保留所有 System 提示词与最新的 K 轮对话（默认 4 条）**，只对中间陈旧轮次执行滑出；
+  3. **Phase 3: 语义提炼与摘要注入 (`distillAndSummarize`)**：通过 `HeuristicContextDistiller`（支持插拔大模型异步提炼）将滑出丢弃的历史消息提炼为紧凑的结构化备忘录：`ChatMessage.system("【前序会话历史提炼摘要与背景备忘】\n- [USER]: ...\n- [ASSISTANT]: ...")`，在极致节省 Token 的同时完整保留会话意图与核心事实。
+
+### 9. 大厂生产级大模型异常分级体系与故障自愈
+- **强类型异常分级类图 (`com.enterprise.llm.exception.*`)**：
+  - **可重试抖动异常 (Retryable)**：`LlmRateLimitException`（HTTP 429）、`LlmServerException`（HTTP 500/502/503/504、超时）；
+  - **致命阻断异常 (Fatal/Non-retryable)**：`LlmAuthenticationException`（401/403 凭据失效）、`LlmContentFilterException`（400 内容安全违规拦截）、`LlmInvalidRequestException`（400 请求格式与参数校验）；
+  - **现场可自愈异常 (Self-Healing)**：`LlmContextLengthExceededException`（400 模型上下文爆窗）。
+- **上游 HTTP 错误响应语义解析器 (`LlmErrorParser`)**：深度解析上游 OpenAI、Azure、Ollama 等供应商标准的 `{ "error": { "message": "...", "type": "...", "code": "..." } }` 格式，自动识别错误语义并精准派生强类型异常。
+- **动态指数退避重试 (Exponential Backoff with Jitter)**：命中 429 限流时，自动解析 `Retry-After` 或 `retry-after-ms` 响应头，在 Java 21 虚拟线程内执行带抖动的指数退避重试，平滑削峰。
+- **400 爆窗紧急压缩现场自愈 (`Emergency Compaction Recovery`)**：当主模型返回 `context_length_exceeded` 异常时，网关不盲目重试相同载荷，而是立即调用 `ContextManager.forceEmergencyCompaction(request)` 触发紧急折叠并就地原位重试，彻底解决突发大 Prompt 导致的爆窗宕机。
+- **安全快速失败与标准化 OpenAI 错误输出**：遇到 401 凭证失效或 400 内容安全违规时，阻断向 Fallback 本地模型切换，通过 `ChatCompletionController` 统一以标准 OpenAI 错误 JSON（包含 `message`、`type`、`code`）和正确 HTTP 状态码返回给客户端，绝不向外暴露 Java 异常堆栈。
 
 ---
 
@@ -541,7 +574,11 @@ java -jar target/llm-enterprise-hub-0.0.1-SNAPSHOT.jar
 - 两级缓存命中、语义相似度、缓存过期与多租户隔离 (`CacheEngineTest`, `ChatCacheIntegrationTest`)；
 - ReAct 模式多轮工具编排调度与沙箱越权拦截 (`AgentToolOrchestratorTest`, `ToolActionGatekeeperTest`)；
 - Agent 长程任务状态机与断点续跑现场恢复 (`AgentTaskManagerTest`, `AgentTaskControllerTest`, `Phase5ResumptionAndDashboardE2ETest`)；
-- 前置 RAG 检索增强流水线与 Milvus 多租户隔离验证 (`TextChunkerTest`, `MilvusVectorStoreTest`, `KnowledgeBaseControllerTest`, `Phase6MilvusRagE2ETest`)。
+- 前置 RAG 检索增强流水线与 Milvus 多租户隔离验证 (`TextChunkerTest`, `MilvusVectorStoreTest`, `KnowledgeBaseControllerTest`, `Phase6MilvusRagE2ETest`)；
+- 长会话上下文预算管理、工具消息修剪与启发式语义提炼 (`ContextManagerTest`)；
+- 大厂强类型大模型异常分级解析器 (`LlmErrorParserTest`)；
+- 429 指数退避重试、400 爆窗现场自愈与致命错误快速阻断 (`FailoverRoutingResilienceTest`)；
+- 端到端上下文自动压缩与故障自愈全链路 E2E 验证 (`ContextCompactionAndResilienceE2ETest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -550,8 +587,8 @@ java -jar target/llm-enterprise-hub-0.0.1-SNAPSHOT.jar
 
 **测试运行报告**：
 ```text
-[INFO] Tests run: 114, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 133, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
-[INFO] Total time: 33.350 s
+[INFO] Total time: 32.252 s
 ```
-**全量 114 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 133 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

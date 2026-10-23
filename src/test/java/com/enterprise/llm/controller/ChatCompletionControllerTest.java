@@ -7,6 +7,8 @@ import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.service.ChatExecutionService;
+import com.enterprise.llm.exception.LlmAuthenticationException;
+import com.enterprise.llm.exception.LlmContentFilterException;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -167,5 +169,69 @@ class ChatCompletionControllerTest {
                         .content(json))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("messages must not be empty")));
+    }
+
+    @Test
+    void shouldFormatLlmAuthenticationExceptionAsOpenAiJson() throws Exception {
+        Mockito.when(tenantService.authenticateApiKey(any()))
+                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+        Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+        Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
+        Mockito.when(failoverRoutingService.chatCompletionWithFailover(any()))
+                .thenThrow(new LlmAuthenticationException("Invalid API key provided", "invalid_api_key"));
+
+        String jsonRequest = """
+                {
+                  "model": "gpt-4o",
+                  "messages": [{"role": "user", "content": "Hi"}]
+                }
+                """;
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .header("X-API-Key", "k")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonRequest))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().json("""
+                        {
+                          "error": {
+                            "message": "Invalid API key provided",
+                            "type": "authentication_error",
+                            "code": "invalid_api_key"
+                          }
+                        }
+                        """));
+    }
+
+    @Test
+    void shouldFormatLlmContentFilterExceptionAsOpenAiJson() throws Exception {
+        Mockito.when(tenantService.authenticateApiKey(any()))
+                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+        Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
+        Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
+        Mockito.when(failoverRoutingService.chatCompletionWithFailover(any()))
+                .thenThrow(new LlmContentFilterException("Prompt triggered content filter", "content_filter"));
+
+        String jsonRequest = """
+                {
+                  "model": "gpt-4o",
+                  "messages": [{"role": "user", "content": "Hi"}]
+                }
+                """;
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .header("X-API-Key", "k")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonRequest))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().json("""
+                        {
+                          "error": {
+                            "message": "Prompt triggered content filter",
+                            "type": "content_filter_error",
+                            "code": "content_filter"
+                          }
+                        }
+                        """));
     }
 }

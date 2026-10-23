@@ -3,6 +3,7 @@ package com.enterprise.llm.service;
 import com.enterprise.llm.agent.AgentToolOrchestrator;
 import com.enterprise.llm.cache.CacheEngine;
 import com.enterprise.llm.client.StreamCancellationHandle;
+import com.enterprise.llm.context.ContextManager;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
@@ -34,6 +35,7 @@ public class ChatExecutionService {
     private final TokenEstimator tokenEstimator;
     private final CacheEngine cacheEngine;
     private final AgentToolOrchestrator agentToolOrchestrator;
+    private final ContextManager contextManager;
     private final ObjectMapper objectMapper;
 
     @Autowired
@@ -42,14 +44,26 @@ public class ChatExecutionService {
             TenantQuotaService tenantQuotaService,
             TokenEstimator tokenEstimator,
             CacheEngine cacheEngine,
-            @Autowired(required = false) AgentToolOrchestrator agentToolOrchestrator
+            @Autowired(required = false) AgentToolOrchestrator agentToolOrchestrator,
+            @Autowired(required = false) ContextManager contextManager
     ) {
         this.failoverRoutingService = failoverRoutingService;
         this.tenantQuotaService = tenantQuotaService;
         this.tokenEstimator = tokenEstimator;
         this.cacheEngine = cacheEngine;
         this.agentToolOrchestrator = agentToolOrchestrator;
+        this.contextManager = contextManager;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public ChatExecutionService(
+            FailoverRoutingService failoverRoutingService,
+            TenantQuotaService tenantQuotaService,
+            TokenEstimator tokenEstimator,
+            CacheEngine cacheEngine,
+            AgentToolOrchestrator agentToolOrchestrator
+    ) {
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, agentToolOrchestrator, null);
     }
 
     public ChatExecutionService(
@@ -58,7 +72,7 @@ public class ChatExecutionService {
             TokenEstimator tokenEstimator,
             CacheEngine cacheEngine
     ) {
-        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, null);
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, null, null);
     }
 
     public ChatExecutionService(
@@ -66,11 +80,11 @@ public class ChatExecutionService {
             TenantQuotaService tenantQuotaService,
             TokenEstimator tokenEstimator
     ) {
-        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null, null);
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null, null, null);
     }
 
     public ChatExecutionService(FailoverRoutingService failoverRoutingService) {
-        this(failoverRoutingService, null, new TokenEstimator(), null, null);
+        this(failoverRoutingService, null, new TokenEstimator(), null, null, null);
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request) {
@@ -78,20 +92,21 @@ public class ChatExecutionService {
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request, QuotaReservation reservation) {
+        ChatCompletionRequest effectiveRequest = (contextManager != null) ? contextManager.manageContext(request) : request;
         try {
             ChatCompletionResponse response;
-            if (request.tools() != null && !request.tools().isEmpty() && agentToolOrchestrator != null) {
+            if (effectiveRequest.tools() != null && !effectiveRequest.tools().isEmpty() && agentToolOrchestrator != null) {
                 String tenantId = reservation != null ? reservation.tenantId() : "default";
-                response = agentToolOrchestrator.runLoop(failoverRoutingService.getPrimaryClient(), request, tenantId);
+                response = agentToolOrchestrator.runLoop(failoverRoutingService.getPrimaryClient(), effectiveRequest, tenantId);
             } else {
-                response = failoverRoutingService.chatCompletionWithFailover(request);
+                response = failoverRoutingService.chatCompletionWithFailover(effectiveRequest);
             }
             if (tenantQuotaService != null && reservation != null) {
                 int actualTokens = 0;
                 if (response != null && response.usage() != null && response.usage().totalTokens() != null) {
                     actualTokens = response.usage().totalTokens();
                 } else if (tokenEstimator != null && response != null) {
-                    int promptTokens = tokenEstimator.estimatePromptTokens(request.messages());
+                    int promptTokens = tokenEstimator.estimatePromptTokens(effectiveRequest.messages());
                     int completionTokens = (response.choices() != null && !response.choices().isEmpty() && response.choices().get(0).message() != null)
                             ? tokenEstimator.countTokens(response.choices().get(0).message().content()) : 0;
                     actualTokens = promptTokens + completionTokens;
@@ -99,7 +114,7 @@ public class ChatExecutionService {
                 tenantQuotaService.settle(reservation, actualTokens);
             }
             if (cacheEngine != null && response != null) {
-                cacheEngine.put(request, response);
+                cacheEngine.put(effectiveRequest, response);
             }
             return response;
         } catch (Exception e) {
@@ -115,6 +130,7 @@ public class ChatExecutionService {
     }
 
     public SseEmitter executeStream(ChatCompletionRequest request, QuotaReservation reservation) {
+        ChatCompletionRequest effectiveRequest = (contextManager != null) ? contextManager.manageContext(request) : request;
         final StreamCancellationHandle[] handleHolder = new StreamCancellationHandle[1];
         final AtomicInteger generatedTokens = new AtomicInteger(0);
         final AtomicReference<StringBuilder> streamContentAcc = new AtomicReference<>(new StringBuilder());
@@ -138,7 +154,7 @@ public class ChatExecutionService {
         };
 
         StreamCancellationHandle handle = failoverRoutingService.streamChatCompletionWithFailover(
-                request,
+                effectiveRequest,
                 chunk -> {
                     try {
                         if (chunk != null) {
@@ -162,7 +178,7 @@ public class ChatExecutionService {
                 },
                 () -> {
                     try {
-                        int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(request.messages()) : 0;
+                        int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(effectiveRequest.messages()) : 0;
                         int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : promptTokens;
                         if (tenantQuotaService != null && reservation != null) {
                             tenantQuotaService.settle(reservation, totalTokens);
@@ -172,11 +188,11 @@ public class ChatExecutionService {
                                     "stream-cache-" + System.currentTimeMillis(),
                                     "chat.completion",
                                     System.currentTimeMillis() / 1000,
-                                    request.model(),
+                                    effectiveRequest.model(),
                                     List.of(new ChatCompletionResponse.Choice(0, new ChatMessage("assistant", streamContentAcc.get().toString()), "stop")),
                                     new Usage(promptTokens, generatedTokens.get(), totalTokens)
                             );
-                            cacheEngine.put(request, streamResponse);
+                            cacheEngine.put(effectiveRequest, streamResponse);
                         }
                         emitter.send(SseEmitter.event().data("[DONE]"));
                         emitter.complete();
@@ -186,7 +202,7 @@ public class ChatExecutionService {
                 },
                 ex -> {
                     if (tenantQuotaService != null && reservation != null) {
-                        int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(request.messages()) : 0;
+                        int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(effectiveRequest.messages()) : 0;
                         int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : 0;
                         if (totalTokens > 0) {
                             tenantQuotaService.settle(reservation, totalTokens);

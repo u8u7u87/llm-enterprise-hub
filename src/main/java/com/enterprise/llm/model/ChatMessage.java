@@ -19,6 +19,10 @@ public record ChatMessage(
         this(role, content, null, null);
     }
 
+    public static ChatMessage system(String content) {
+        return new ChatMessage("system", content, null, null);
+    }
+
     public static ChatMessage user(String content) {
         return new ChatMessage("user", content, null, null);
     }

@@ -57,13 +57,15 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() >= 400) {
-                throw new RuntimeException("Upstream LLM error: HTTP " + response.statusCode() + " body: " + response.body());
+                throw LlmErrorParser.parse(response.statusCode(), response.body(), response.headers());
             }
 
             return objectMapper.readValue(response.body(), ChatCompletionResponse.class);
+        } catch (com.enterprise.llm.exception.LlmException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to execute sync chatCompletion", e);
-            throw new RuntimeException("Chat completion failed: " + e.getMessage(), e);
+            throw new com.enterprise.llm.exception.LlmServerException("Chat completion failed: " + e.getMessage(), e, 500);
         }
     }
 
@@ -107,7 +109,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
                 HttpResponse<InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
                 if (response.statusCode() >= 400) {
-                    onError.accept(new RuntimeException("Upstream returned HTTP " + response.statusCode()));
+                    String errBody = "";
+                    try (InputStream is = response.body()) {
+                        errBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    } catch (Exception ignored) {}
+                    onError.accept(LlmErrorParser.parse(response.statusCode(), errBody, response.headers()));
                     return;
                 }
 

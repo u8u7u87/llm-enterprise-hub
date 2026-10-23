@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-146%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-163%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -30,6 +30,9 @@
   - [12. 服务端多租户会话管理体系 (Session Management SPI)](#12-服务端多租户会话管理体系-session-management-spi)
   - [13. 工作记忆 (Working Memory) 临时脱水下沉与语义按需回捞](#13-工作记忆-working-memory-临时脱水下沉与语义按需回捞)
   - [14. Java 21 虚拟线程 Tool 并发执行与租户 Scope 权限治理](#14-java-21-虚拟线程-tool-并发执行与租户-scope-权限治理)
+  - [15. Prometheus / Micrometer 企业级度量体系与端点暴露](#15-prometheus--micrometer-企业级度量体系与端点暴露)
+  - [16. 高并发压测基准套件与 SQLite WAL 调优](#16-高并发压测基准套件与-sqlite-wal-调优)
+  - [17. 多 Agent 协同工作流引擎 (Multi-Agent Swarm / Handoff)](#17-多-agent-协同工作流引擎-multi-agent-swarm--handoff)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -304,6 +307,52 @@ public class OrderService {
   public String calculateVipDiscount(String customerId) { ... }
   ```
   未被授权的租户无论在工具元数据发现阶段（下发模型 `tools` 列表）还是在运行时沙箱调用阶段均被严格屏蔽拦截，杜绝特权工具越权调用风险。
+
+---
+
+### 15. Prometheus / Micrometer 企业级度量体系与端点暴露
+
+为了满足大厂生产环境对 SLA、延迟分布、Token 吞吐及工具性能的实时监控，系统构建了指标度量闭环：
+- **Core 层零框架依赖 SPI (`LlmMetricsCollector`)**：
+  在核心层抽象出高性能度量接口，预置 `NoOpMetricsCollector`（零开销缺省）与 `CompositeMetricsCollector`（多路广播）。
+- **Spring Boot Starter / Gateway 自动装配**：
+  引入 `micrometer-registry-prometheus` 与 `spring-boot-starter-actuator`，自动将 `LlmSpan` 和 `AgentToolOrchestrator` 生命周期事件转换为标准 Micrometer 指标，并通过 `/actuator/prometheus` 端点向 Prometheus / Grafana 暴露。
+
+**标准监控指标字典**：
+
+| 指标名称 | 类型 | 标签 (Tags) | 说明与 SLA 分位 |
+| :--- | :--- | :--- | :--- |
+| `llm_requests_total` | Counter | `model`, `tenant`, `status` | 累计模型推理请求次数 |
+| `llm_request_duration_seconds` | Summary/Timer | `model`, `tenant` | 端到端请求总耗时（P50/P90/P99 分位发布） |
+| `llm_time_to_first_token_seconds` | Summary/Timer | `model`, `tenant` | 流式首字到达耗时 (TTFT)，监控用户交互灵敏度 |
+| `llm_tokens_per_second` | Summary | `model` | 实时 Token 生成吞吐速率 (TPS) |
+| `llm_tokens_total` | Counter | `model`, `tenant`, `type` (`prompt`/`completion`) | 累计消耗 Token 量（支持财务核算与分级计费） |
+| `llm_tool_duration_seconds` | Timer | `tool`, `tenant`, `status` | 外部 Tool/函数执行延迟统计 |
+| `llm_active_requests` | Gauge | `model` | 当前在途正在处理中的并发请求水位 |
+
+---
+
+### 16. 高并发压测基准套件与 SQLite WAL 调优
+
+在面对高吞吐线上流量时，系统针对虚拟线程调度与 SQLite 嵌入式持久化进行了极致并发调优：
+- **SQLite 并发写入瓶颈彻底攻克**：
+  配置 `PRAGMA journal_mode = WAL;`、`PRAGMA busy_timeout = 5000;` 与 `PRAGMA synchronous = NORMAL;` 开启读写分离。在 `SqliteSessionStorageProvider` 中引入 JVM 级 `ReentrantLock` 锁机制，彻底避免了 50+ 虚拟线程并发写库时操作系统级文件锁自旋导致的 HikariCP 线程池饥饿与锁超时。
+- **并发性能基准验证报告 (`ConcurrencyBenchmarkSuiteTest`)**：
+  - **Tool 虚拟线程并发加速比**：模拟 8 个典型耗时 40ms 的外部 I/O 工具，串行耗时 370ms，虚拟线程调度耗时仅 **91ms**，**加速比达到 4.07x**；
+  - **SQLite WAL 并发持久化吞吐**：50 虚拟线程并发写入 100 组独立会话与消息，耗时仅 105ms，**吞吐量达到 952.38 ops/sec**，**成功率 100%（0 错误）**，P50 延迟 81ms，P99 延迟 100ms。
+
+---
+
+### 17. 多 Agent 协同工作流引擎 (Multi-Agent Swarm / Handoff)
+
+为了支持复杂的跨领域协同场景，系统在 `llm-enterprise-core` 中内置了自主智能体工作流引擎（参考 OpenAI Swarm 与工业界 Multi-Agent 架构设计）：
+- **`AgentRole`（智能体角色）**：支持自主声明 Agent 职责、专有 System Prompt、配备专属 Tool 集合及允许转交的下游目标智能体列表；
+- **`AgentHandoff`（动态委托转交）**：当当前 Agent 判断任务超出其职责范畴时，大模型自动调用合成转交工具 `transfer_to_<AgentName>`，将控制权平滑移交，并更新共享黑板；
+- **`AgentSharedContext`（跨智能体共享黑板）**：线程安全的状态机存储，在整个 Swarm 协作生命周期中传递业务参数（如订单号、鉴权凭据、中间计算结果）；
+- **`AgentSwarmOrchestrator`（总控引擎）**：
+  驱动会话迭代，自动为当前激活的 Agent 挂载其合法转交动作，智能防止死循环转交（默认 `maxHandoffTurns = 5`）；
+- **智能客服真实场景实战 (`sample-business-app`)**：
+  已在样例工程完整落地 `TriageAgent`（工单分诊接待）依据用户问答自动无感转交给 `LogisticsAgent`（物流专家），调用 `@LlmTool` 查询快递状态并最终给出综合解答的端到端协作闭环。
 
 ---
 
@@ -623,7 +672,10 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 - 全链路 TraceContext 传递、MDC 绑定与单行标准 JSON 审计日志打点 (`TraceContextAndAuditTest`, `TraceFilterAndMdcIntegrationTest`)；
 - 服务端多租户会话管理 SPI、会话上下文自动拼接与 REST 接口 (`SessionManagerTest`, `SessionManagementIntegrationTest`)；
 - 工作记忆 (Working Memory) 大结果脱水下沉与语义相关性按需回捞 (`WorkingMemoryManagerTest`, `WorkingMemoryContextCompactionIntegrationTest`)；
-- Java 21 虚拟线程 Tool 并发执行性能与租户 Scope 权限隔离 (`ToolConcurrencyAndScopingTest`)。
+- Java 21 虚拟线程 Tool 并发执行性能与租户 Scope 权限隔离 (`ToolConcurrencyAndScopingTest`)；
+- Prometheus / Micrometer 指标导出、TTFT、TPS、Token 消耗端到端验证 (`MicrometerLlmMetricsCollectorTest`, `PrometheusActuatorEndpointTest`)；
+- 高并发 SQLite WAL 模式读写分离与虚拟线程加速比性能基准 (`ConcurrencyBenchmarkSuiteTest`)；
+- 多 Agent 协同工作流引擎与智能客服工单分诊实战 (`AgentSwarmOrchestratorTest`, `CustomerSupportSwarmTest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -635,12 +687,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 [INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
 [INFO] 
 [INFO] llm-enterprise-hub ................................. SUCCESS
-[INFO] llm-enterprise-core ................................ SUCCESS (83 tests)
-[INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (1 test)
-[INFO] llm-enterprise-gateway-server ...................... SUCCESS (58 tests)
-[INFO] sample-business-app ................................ SUCCESS (5 tests)
+[INFO] llm-enterprise-core ................................ SUCCESS (94 tests)
+[INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (3 tests)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (60 tests)
+[INFO] sample-business-app ................................ SUCCESS (6 tests)
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 46.503 s
+[INFO] Total time: 54.603 s
 ```
-**全量 147 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 163 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

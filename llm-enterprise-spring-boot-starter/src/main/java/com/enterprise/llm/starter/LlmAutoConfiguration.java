@@ -173,12 +173,36 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.metrics.LlmMetricsCollector.class)
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    public com.enterprise.llm.metrics.LlmMetricsCollector micrometerLlmMetricsCollector(
+            ObjectProvider<io.micrometer.core.instrument.MeterRegistry> meterRegistryProvider
+    ) {
+        io.micrometer.core.instrument.MeterRegistry registry = meterRegistryProvider.getIfAvailable();
+        if (registry != null) {
+            return new com.enterprise.llm.starter.metrics.MicrometerLlmMetricsCollector(registry);
+        }
+        return com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.metrics.LlmMetricsCollector.class)
+    public com.enterprise.llm.metrics.LlmMetricsCollector noOpLlmMetricsCollector() {
+        return com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
+    }
+
+    @Bean
     @ConditionalOnMissingBean(AgentToolOrchestrator.class)
     public AgentToolOrchestrator agentToolOrchestrator(
             ToolRegistry toolRegistry,
-            ObjectProvider<ToolActionGatekeeper> gatekeeperProvider
+            ObjectProvider<ToolActionGatekeeper> gatekeeperProvider,
+            ObjectProvider<com.enterprise.llm.metrics.LlmMetricsCollector> metricsCollectorProvider
     ) {
-        return new AgentToolOrchestrator(toolRegistry, gatekeeperProvider.getIfAvailable());
+        AgentToolOrchestrator orchestrator = new AgentToolOrchestrator(toolRegistry, gatekeeperProvider.getIfAvailable());
+        if (metricsCollectorProvider.getIfAvailable() != null) {
+            orchestrator.setMetricsCollector(metricsCollectorProvider.getIfAvailable());
+        }
+        return orchestrator;
     }
 
     @Bean

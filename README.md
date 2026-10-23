@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-139%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-146%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -26,6 +26,10 @@
   - [8. 上下文预算管理、修剪与语义提炼 (Context Distillation)](#8-上下文预算管理修剪与语义提炼-context-distillation)
   - [9. 大厂生产级大模型异常分级体系与故障自愈](#9-大厂生产级大模型异常分级体系与故障自愈)
   - [10. 工程多模块解耦与 Spring AI 式工具化开发体验](#10-工程多模块解耦与-spring-ai-式工具化开发体验)
+  - [11. 全链路 Trace 追踪与 MDC 结构化日志闭环](#11-全链路-trace-追踪与-mdc-结构化日志闭环)
+  - [12. 服务端多租户会话管理体系 (Session Management SPI)](#12-服务端多租户会话管理体系-session-management-spi)
+  - [13. 工作记忆 (Working Memory) 临时脱水下沉与语义按需回捞](#13-工作记忆-working-memory-临时脱水下沉与语义按需回捞)
+  - [14. Java 21 虚拟线程 Tool 并发执行与租户 Scope 权限治理](#14-java-21-虚拟线程-tool-并发执行与租户-scope-权限治理)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -252,6 +256,55 @@ public class OrderService {
 2. **开启注解**：在主类标注 `@SpringBootApplication` 与 `@EnableLlmEnterprise`（或依赖 Spring Boot 标准自动装配）。
 3. **注入即用**：直接注入 `ToolRegistry`、`AgentToolOrchestrator`、`LlmClient` 或 `ContextManager`，开箱即享企业级大模型调度与安全治理能力。
 
+
+---
+
+### 11. 全链路 Trace 追踪与 MDC 结构化日志闭环
+
+在分布式生产环境下，大模型的长耗时与多步骤调用必须具备毫秒级可观测性。系统构建了标准的分布式追踪机制：
+- **`TraceContext` 与 MDC 绑定**：入口通过 `TraceFilter`（Order 0）自动提取或生成 `X-Trace-Id`、`X-Session-Id`，并在鉴权后富化 `tenantId`，直接同步至 SLF4J MDC。网关所有日志自动带有 `[%X{traceId:-}][%X{tenantId:-}]` 前缀。
+- **虚拟线程上下文自闭环**：在 `TraceFilter` 的 `finally` 块彻底清除 ThreadLocal 与 MDC，避免虚拟线程池化引发的上下文泄漏与串流。
+- **细粒度 `LlmSpan` 性能度量**：记录 `ttftMs`（首字生成延迟 Time To First Token）、`totalLatencyMs`、`tokensPerSecond` (TPS)、`promptTokens`、`completionTokens`，全面覆盖流式 SSE 和同步调用。
+- **结构化请求审计输出 (`RequestAuditLogger`)**：单次请求无论成功、降级还是安全拦截，均输出单行独立 JSON 格式的标准审计日志，可直接对接到 ELK / Loki 等日志采集系统；支持导出为 Langfuse 兼容格式。
+
+---
+
+### 12. 服务端多租户会话管理体系 (Session Management SPI)
+
+原生 OpenAI 接口是无状态协议，导致前端客户端必须在每次请求中携带全部历史消息，极易产生流量冗余与历史数据篡改风险。
+- **`SessionStorageProvider` 存储 SPI**：解耦核心层存储抽象，支持 `InMemorySessionStorageProvider` 与基于 SQLite 的 `SqliteSessionStorageProvider` 持久化适配。
+- **透明对话上下文接管 (`SessionManager`)**：
+  - 客户端请求仅需在 Body 中传入 `"session_id": "sess-xxxx"` 和最新的用户问题；
+  - 服务端自动从 SQLite 加载该租户的历史会话并完成上下文拼接（自动保留 system prompt）；
+  - 推理完成或流式推送结束时，自动将当前轮次的问答对持久化至 `chat_session_messages` 表；
+  - 兼容客户端全量回传模式：如果检测到客户端已包含历史记录，自动去重不产生重复拼接。
+- **RESTful 会话管理能力 (`/v1/sessions`)**：支持租户级别的会话列表分页查询、指定会话全量历史拉取以及会话级联物理清除。
+
+---
+
+### 13. 工作记忆 (Working Memory) 临时脱水下沉与语义按需回捞
+
+在长程智能体与复杂业务对话中，工具调用的中间数据（如长表格、几百行的 SQL 查询结果、大篇幅接口响应）会迅速占满大模型的上下文窗口，推高推理成本并导致模型注意力分散：
+- **大结果脱水下沉 (Offload to Working Memory)**：
+  当工具执行结果或历史轮次文本超过阈值（如 > 300 字符），或触发上下文预算压缩时，原始明细自动下沉存入 `WorkingMemoryManager` 内存暂存区，在上下文消息中替换为轻量级引用存根：
+  `[WorkingMemoryRef: id="mem-xxxx" summary="Earlier tool output (622 chars)"]`
+- **语义相关性按需回捞 (Semantic Rehydrate Recall)**：
+  后续轮次中，当用户针对先前已脱水的内容发起追问（如“刚刚查出的那个订单金额是多少？”）时，`WorkingMemoryManager` 基于关键词停用词重合度（或 `EmbeddingClient` 余弦相似度）精准判定相关性，将对应的原始明细自动回捞唤醒并还原至输入上下文中，实现“大容量暂存，按需精确唤醒”。
+
+---
+
+### 14. Java 21 虚拟线程 Tool 并发执行与租户 Scope 权限治理
+
+- **虚拟线程并发执行多工具调用 (Parallel Tool Calling)**：
+  当大模型在单轮决策中输出多个并行 `tool_calls`（例如同时查询三个城市的天气、或同时调用库存与汇率接口），`AgentToolOrchestrator` 自动调度 Java 21 虚拟线程（`newVirtualThreadPerTaskExecutor`）进行并发异步 I/O 执行，大幅将串行累加耗时压缩至单次最长调用的耗时，并保证结果严格按原序号保序追加。
+- **租户粒度与 Scope 细粒度权限控制**：
+  在 `@LlmTool` 注解中新增 `allowedTenants` 与 `scopes` 声明属性。例如：
+  ```java
+  @LlmTool(name = "vip_pricing_engine", allowedTenants = {"tenant-vip"}, scopes = {"vip:pricing"})
+  public String calculateVipDiscount(String customerId) { ... }
+  ```
+  未被授权的租户无论在工具元数据发现阶段（下发模型 `tools` 列表）还是在运行时沙箱调用阶段均被严格屏蔽拦截，杜绝特权工具越权调用风险。
+
 ---
 
 ## 🔌 全量 RESTful API 规范与示例
@@ -377,6 +430,26 @@ curl -X GET http://localhost:8080/v1/admin/analytics/overview \
 ```bash
 curl -X GET "http://localhost:8080/v1/admin/metrics/timeline?minutes=60" \
   -H "X-Admin-Key: test-admin-secret-key-12345"
+```
+
+### 5. 服务端多租户会话管理接口
+
+查询当前租户会话列表 (`GET /v1/sessions?limit=20&offset=0`)：
+```bash
+curl -X GET http://localhost:8080/v1/sessions \
+  -H "Authorization: Bearer sk-tenant-alpha-key"
+```
+
+拉取指定会话完整消息流水 (`GET /v1/sessions/{sessionId}`)：
+```bash
+curl -X GET http://localhost:8080/v1/sessions/sess-101 \
+  -H "Authorization: Bearer sk-tenant-alpha-key"
+```
+
+删除会话及其历史数据 (`DELETE /v1/sessions/{sessionId}`)：
+```bash
+curl -X DELETE http://localhost:8080/v1/sessions/sess-101 \
+  -H "Authorization: Bearer sk-tenant-alpha-key"
 ```
 
 ---
@@ -546,7 +619,11 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 - 429 指数退避重试、400 爆窗现场自愈与致命错误快速阻断 (`FailoverRoutingResilienceTest`)；
 - 端到端上下文自动压缩与故障自愈全链路 E2E 验证 (`ContextCompactionAndResilienceE2ETest`)；
 - `@LlmTool` 注解反射扫描与 JSON Schema 自动化生成测试 (`LlmToolAnnotationScanTest`)；
-- 独立业务微服务引入 Starter、工具自动装配与 ReAct 闭环端到端验证 (`SampleBusinessAppTest`)。
+- 独立业务微服务引入 Starter、工具自动装配与 ReAct 闭环端到端验证 (`SampleBusinessAppTest`)；
+- 全链路 TraceContext 传递、MDC 绑定与单行标准 JSON 审计日志打点 (`TraceContextAndAuditTest`, `TraceFilterAndMdcIntegrationTest`)；
+- 服务端多租户会话管理 SPI、会话上下文自动拼接与 REST 接口 (`SessionManagerTest`, `SessionManagementIntegrationTest`)；
+- 工作记忆 (Working Memory) 大结果脱水下沉与语义相关性按需回捞 (`WorkingMemoryManagerTest`, `WorkingMemoryContextCompactionIntegrationTest`)；
+- Java 21 虚拟线程 Tool 并发执行性能与租户 Scope 权限隔离 (`ToolConcurrencyAndScopingTest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -558,12 +635,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 [INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
 [INFO] 
 [INFO] llm-enterprise-hub ................................. SUCCESS
-[INFO] llm-enterprise-core ................................ SUCCESS (77 tests)
+[INFO] llm-enterprise-core ................................ SUCCESS (83 tests)
 [INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (1 test)
-[INFO] llm-enterprise-gateway-server ...................... SUCCESS (56 tests)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (58 tests)
 [INFO] sample-business-app ................................ SUCCESS (5 tests)
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 42.758 s
+[INFO] Total time: 46.503 s
 ```
-**全量 139 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 147 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

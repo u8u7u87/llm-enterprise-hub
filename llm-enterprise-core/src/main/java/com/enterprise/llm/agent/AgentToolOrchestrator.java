@@ -132,40 +132,19 @@ public class AgentToolOrchestrator {
             // Append assistant message containing the tool calls to history
             conversationHistory.add(assistantMsg);
 
-            // Execute each requested tool call
-            for (ToolCall tc : toolCalls) {
-                String callId = tc.id() != null ? tc.id() : ("call_" + System.currentTimeMillis());
-                String toolName = (tc.function() != null && tc.function().name() != null) ? tc.function().name() : "";
-                Map<String, Object> arguments = (tc.function() != null && tc.function().arguments() != null)
-                        ? tc.function().arguments() : Collections.emptyMap();
-
-                ToolAction action = new ToolAction(toolName, arguments);
-                String executionResult;
-
-                try {
-                    // 1. ToolActionGatekeeper validation (security & tenant isolation)
-                    if (toolActionGatekeeper != null) {
-                        toolActionGatekeeper.validateAction(action, tenantId);
+            // Execute requested tool calls (parallelized via Java 21 virtual threads when multiple)
+            if (toolCalls.size() == 1) {
+                conversationHistory.add(executeSingleToolCall(toolCalls.get(0), tenantId));
+            } else {
+                try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                    List<java.util.concurrent.CompletableFuture<ChatMessage>> futures = toolCalls.stream()
+                            .map(tc -> java.util.concurrent.CompletableFuture.supplyAsync(() -> executeSingleToolCall(tc, tenantId), executor))
+                            .toList();
+                    java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+                    for (var f : futures) {
+                        conversationHistory.add(f.join());
                     }
-
-                    // 2. Execute registered tool
-                    var registeredOpt = toolRegistry.getTool(toolName);
-                    if (registeredOpt.isPresent()) {
-                        executionResult = registeredOpt.get().handler().execute(arguments);
-                    } else {
-                        executionResult = "Error: Tool '" + toolName + "' is not registered.";
-                        log.warn("Attempted to execute unregistered tool '{}'", toolName);
-                    }
-                } catch (SecurityViolationException | CrossTenantViolationException e) {
-                    log.warn("Tool execution blocked by gatekeeper: {}", e.getMessage());
-                    executionResult = "Security policy violation: " + e.getMessage();
-                } catch (Exception e) {
-                    log.error("Error executing tool '{}'", toolName, e);
-                    executionResult = "Tool execution failure: " + e.getMessage();
                 }
-
-                // Append tool role response to conversation
-                conversationHistory.add(ChatMessage.tool(callId, executionResult));
             }
 
             // Checkpoint callback after each turn
@@ -191,5 +170,42 @@ public class AgentToolOrchestrator {
 
     public ChatCompletionResponse runLoop(LlmClient llmClient, ChatCompletionRequest initialRequest, String tenantId) {
         return runLoop(llmClient, initialRequest, tenantId, DEFAULT_MAX_ITERATIONS);
+    }
+
+    private ChatMessage executeSingleToolCall(ToolCall tc, String tenantId) {
+        String callId = tc.id() != null ? tc.id() : ("call_" + System.currentTimeMillis());
+        String toolName = (tc.function() != null && tc.function().name() != null) ? tc.function().name() : "";
+        Map<String, Object> arguments = (tc.function() != null && tc.function().arguments() != null)
+                ? tc.function().arguments() : Collections.emptyMap();
+
+        ToolAction action = new ToolAction(toolName, arguments);
+        String executionResult;
+
+        try {
+            // 1. ToolActionGatekeeper validation (security & parameter tenant isolation)
+            if (toolActionGatekeeper != null) {
+                toolActionGatekeeper.validateAction(action, tenantId);
+            }
+
+            // 2. Tenant permission check in ToolRegistry
+            var registeredOpt = toolRegistry.getToolForTenant(toolName, tenantId);
+            if (registeredOpt.isPresent()) {
+                executionResult = registeredOpt.get().handler().execute(arguments);
+            } else if (toolRegistry.hasTool(toolName)) {
+                executionResult = "Error: Tenant '" + tenantId + "' is not authorized to execute tool '" + toolName + "'.";
+                log.warn("Tenant '{}' unauthorized to execute restricted tool '{}'", tenantId, toolName);
+            } else {
+                executionResult = "Error: Tool '" + toolName + "' is not registered.";
+                log.warn("Attempted to execute unregistered tool '{}'", toolName);
+            }
+        } catch (SecurityViolationException | CrossTenantViolationException e) {
+            log.warn("Tool execution blocked by gatekeeper: {}", e.getMessage());
+            executionResult = "Security policy violation: " + e.getMessage();
+        } catch (Exception e) {
+            log.error("Error executing tool '{}'", toolName, e);
+            executionResult = "Tool execution failure: " + e.getMessage();
+        }
+
+        return ChatMessage.tool(callId, executionResult);
     }
 }

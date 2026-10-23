@@ -25,4 +25,14 @@ public @interface LlmTool {
      * Detailed description of what the tool does, provided to the LLM to guide tool invocation.
      */
     String description() default "";
+
+    /**
+     * Allowed tenants. If empty, the tool is accessible to all tenants.
+     */
+    String[] allowedTenants() default {};
+
+    /**
+     * Security / permission scopes required to invoke this tool.
+     */
+    String[] scopes() default {};
 }

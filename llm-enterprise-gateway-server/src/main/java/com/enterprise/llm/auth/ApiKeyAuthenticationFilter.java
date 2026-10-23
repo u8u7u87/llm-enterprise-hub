@@ -2,6 +2,7 @@ package com.enterprise.llm.auth;
 
 import com.enterprise.llm.tenant.TenantEntity;
 import com.enterprise.llm.tenant.TenantService;
+import com.enterprise.llm.trace.TraceContext;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,6 +56,19 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         }
 
         TenantEntity tenant = tenantOpt.get();
+        TraceContext currentTrace = TraceContext.getCurrent();
+        if (currentTrace != null) {
+            TraceContext enriched = new TraceContext(
+                    currentTrace.traceId(),
+                    currentTrace.spanId(),
+                    currentTrace.parentSpanId(),
+                    tenant.getId(),
+                    tenant.getId(),
+                    currentTrace.sessionId()
+            );
+            TraceContext.setCurrent(enriched);
+        }
+
         if (!tenant.isEnabled()) {
             sendJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Tenant account is disabled");
             return;

@@ -39,6 +39,7 @@ public class ChatCompletionController {
     private final CacheEngine cacheEngine;
     private final com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
     private final com.enterprise.llm.rag.RagPipelineService ragPipelineService;
+    private final com.enterprise.llm.trace.TraceCollector traceCollector;
 
     @Autowired
     public ChatCompletionController(
@@ -49,7 +50,8 @@ public class ChatCompletionController {
             TenantQuotaService tenantQuotaService,
             CacheEngine cacheEngine,
             @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService,
-            @Autowired(required = false) com.enterprise.llm.rag.RagPipelineService ragPipelineService
+            @Autowired(required = false) com.enterprise.llm.rag.RagPipelineService ragPipelineService,
+            @Autowired(required = false) com.enterprise.llm.trace.TraceCollector traceCollector
     ) {
         this.chatExecutionService = chatExecutionService;
         this.promptGuardrailService = promptGuardrailService;
@@ -59,6 +61,7 @@ public class ChatCompletionController {
         this.cacheEngine = cacheEngine;
         this.metricsRecordService = metricsRecordService;
         this.ragPipelineService = ragPipelineService;
+        this.traceCollector = traceCollector;
     }
 
     public ChatCompletionController(
@@ -70,7 +73,7 @@ public class ChatCompletionController {
             CacheEngine cacheEngine,
             com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
     ) {
-        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, metricsRecordService, null);
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, metricsRecordService, null, null);
     }
 
     public ChatCompletionController(
@@ -81,14 +84,14 @@ public class ChatCompletionController {
             TenantQuotaService tenantQuotaService,
             CacheEngine cacheEngine
     ) {
-        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null, null);
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null, null, null);
     }
 
     public ChatCompletionController(
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService
     ) {
-        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null, null);
+        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null, null, null);
     }
 
     @PostMapping("/completions")
@@ -108,6 +111,14 @@ public class ChatCompletionController {
                 if (metricsRecordService != null) {
                     metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
                 }
+                com.enterprise.llm.trace.TraceContext traceCtx = com.enterprise.llm.trace.TraceContext.getCurrent();
+                com.enterprise.llm.trace.LlmSpan span = new com.enterprise.llm.trace.LlmSpan("chat_completion_guard_blocked", traceCtx, request.model());
+                span.start(startMs);
+                span.finish(System.currentTimeMillis(), 0, 0);
+                if (traceCollector != null) {
+                    traceCollector.collect(span);
+                }
+                com.enterprise.llm.trace.RequestAuditLogger.logAudit(span, 400, "Security violation: Potential prompt injection detected");
                 return ResponseEntity.badRequest()
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(Map.of("error", "Security violation: Potential prompt injection detected"));
@@ -131,6 +142,16 @@ public class ChatCompletionController {
                 if (metricsRecordService != null) {
                     metricsRecordService.record(true, latency, 0, saved, true, false, false);
                 }
+                com.enterprise.llm.trace.TraceContext traceCtx = com.enterprise.llm.trace.TraceContext.getCurrent();
+                com.enterprise.llm.trace.LlmSpan span = new com.enterprise.llm.trace.LlmSpan("chat_completion_cache", traceCtx, effectiveRequest.model());
+                span.start(startMs);
+                span.setCacheHit(true);
+                span.finish(System.currentTimeMillis(), 0, 0);
+                if (traceCollector != null) {
+                    traceCollector.collect(span);
+                }
+                com.enterprise.llm.trace.RequestAuditLogger.logAudit(span, 200);
+
                 if (Boolean.TRUE.equals(effectiveRequest.stream())) {
                     return chatExecutionService.emitCachedStream(cached.get());
                 } else {
@@ -152,6 +173,14 @@ public class ChatCompletionController {
                 if (metricsRecordService != null) {
                     metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
                 }
+                com.enterprise.llm.trace.TraceContext traceCtx = com.enterprise.llm.trace.TraceContext.getCurrent();
+                com.enterprise.llm.trace.LlmSpan span = new com.enterprise.llm.trace.LlmSpan("chat_completion_quota_exceeded", traceCtx, effectiveRequest.model());
+                span.start(startMs);
+                span.finish(System.currentTimeMillis(), 0, 0);
+                if (traceCollector != null) {
+                    traceCollector.collect(span);
+                }
+                com.enterprise.llm.trace.RequestAuditLogger.logAudit(span, 429, "Rate limit or daily token quota exceeded");
                 return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(Map.of("status", 429, "error", "Rate limit or daily token quota exceeded"));

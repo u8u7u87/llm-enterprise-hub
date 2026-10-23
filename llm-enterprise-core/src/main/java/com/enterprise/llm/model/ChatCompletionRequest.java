@@ -16,7 +16,9 @@ public record ChatCompletionRequest(
         Double temperature,
         Integer maxTokens,
         List<ToolDefinition> tools,
-        Object toolChoice
+        Object toolChoice,
+        String sessionId,
+        String user
 ) {
     public ChatCompletionRequest {
         if (stream == null) {
@@ -25,11 +27,14 @@ public record ChatCompletionRequest(
     }
 
     public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature) {
-        this(model, messages, stream, temperature, null, null, null);
+        this(model, messages, stream, temperature, null, null, null, null, null);
     }
 
     public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature, Integer maxTokens) {
-        this(model, messages, stream, temperature, maxTokens, null, null);
+        this(model, messages, stream, temperature, maxTokens, null, null, null, null);
+    }
+
+    public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature, Integer maxTokens, List<ToolDefinition> tools, Object toolChoice) {
+        this(model, messages, stream, temperature, maxTokens, tools, toolChoice, null, null);
     }
 }
-

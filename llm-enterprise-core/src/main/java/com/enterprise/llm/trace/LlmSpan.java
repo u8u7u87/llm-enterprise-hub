@@ -1,10 +1,17 @@
 package com.enterprise.llm.trace;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 public class LlmSpan {
 
     private final String name;
     private final TraceContext context;
     private final String model;
+    private final Map<String, Object> attributes = new ConcurrentHashMap<>();
 
     private long startTimeMs;
     private long firstTokenTimeMs;
@@ -77,5 +84,58 @@ public class LlmSpan {
 
     public int getTotalTokens() {
         return promptTokens + completionTokens;
+    }
+
+    public LlmSpan setAttribute(String key, Object value) {
+        if (key != null && value != null) {
+            attributes.put(key, value);
+        }
+        return this;
+    }
+
+    public Object getAttribute(String key) {
+        return attributes.get(key);
+    }
+
+    public Map<String, Object> getAttributes() {
+        return Collections.unmodifiableMap(attributes);
+    }
+
+    public boolean isCacheHit() {
+        return Boolean.TRUE.equals(attributes.get("cache_hit"));
+    }
+
+    public LlmSpan setCacheHit(boolean cacheHit) {
+        attributes.put("cache_hit", cacheHit);
+        return this;
+    }
+
+    public boolean isStream() {
+        return Boolean.TRUE.equals(attributes.get("stream"));
+    }
+
+    public LlmSpan setStream(boolean stream) {
+        attributes.put("stream", stream);
+        return this;
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<String> getToolsInvoked() {
+        Object val = attributes.get("tools_invoked");
+        if (val instanceof List<?>) {
+            return (List<String>) val;
+        }
+        return Collections.emptyList();
+    }
+
+    public LlmSpan addToolInvoked(String toolName) {
+        if (toolName != null) {
+            attributes.compute("tools_invoked", (k, v) -> {
+                List<String> list = (v instanceof List<?>) ? new ArrayList<>((List<String>) v) : new ArrayList<>();
+                list.add(toolName);
+                return list;
+            });
+        }
+        return this;
     }
 }

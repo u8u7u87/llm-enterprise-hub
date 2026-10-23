@@ -17,9 +17,13 @@ public class LangfuseTraceExporter {
     public String exportSpanAsJson(LlmSpan span) {
         try {
             Map<String, Object> payload = new HashMap<>();
-            payload.put("traceId", span.getContext().traceId());
-            payload.put("spanId", span.getContext().spanId());
-            payload.put("userId", span.getContext().userId());
+            if (span.getContext() != null) {
+                payload.put("traceId", span.getContext().traceId());
+                payload.put("spanId", span.getContext().spanId());
+                payload.put("userId", span.getContext().userId());
+                payload.put("tenantId", span.getContext().tenantId());
+                payload.put("sessionId", span.getContext().sessionId());
+            }
             payload.put("name", span.getName());
             payload.put("model", span.getModel());
             payload.put("ttftMs", span.getTtftMs());
@@ -28,6 +32,7 @@ public class LangfuseTraceExporter {
             payload.put("promptTokens", span.getPromptTokens());
             payload.put("completionTokens", span.getCompletionTokens());
             payload.put("totalTokens", span.getTotalTokens());
+            payload.put("attributes", span.getAttributes());
 
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {

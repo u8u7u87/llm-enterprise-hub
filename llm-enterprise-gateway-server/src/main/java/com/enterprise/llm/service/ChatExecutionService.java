@@ -14,6 +14,10 @@ import com.enterprise.llm.quota.TenantQuotaService;
 import com.enterprise.llm.router.FailoverRoutingService;
 import com.enterprise.llm.token.TokenEstimator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.enterprise.llm.trace.LlmSpan;
+import com.enterprise.llm.trace.RequestAuditLogger;
+import com.enterprise.llm.trace.TraceCollector;
+import com.enterprise.llm.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +25,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -36,6 +42,8 @@ public class ChatExecutionService {
     private final CacheEngine cacheEngine;
     private final AgentToolOrchestrator agentToolOrchestrator;
     private final ContextManager contextManager;
+    private final TraceCollector traceCollector;
+    private final com.enterprise.llm.session.SessionManager sessionManager;
     private final ObjectMapper objectMapper;
 
     @Autowired
@@ -45,7 +53,9 @@ public class ChatExecutionService {
             TokenEstimator tokenEstimator,
             CacheEngine cacheEngine,
             @Autowired(required = false) AgentToolOrchestrator agentToolOrchestrator,
-            @Autowired(required = false) ContextManager contextManager
+            @Autowired(required = false) ContextManager contextManager,
+            @Autowired(required = false) TraceCollector traceCollector,
+            @Autowired(required = false) com.enterprise.llm.session.SessionManager sessionManager
     ) {
         this.failoverRoutingService = failoverRoutingService;
         this.tenantQuotaService = tenantQuotaService;
@@ -53,7 +63,21 @@ public class ChatExecutionService {
         this.cacheEngine = cacheEngine;
         this.agentToolOrchestrator = agentToolOrchestrator;
         this.contextManager = contextManager;
+        this.traceCollector = traceCollector;
+        this.sessionManager = sessionManager;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public ChatExecutionService(
+            FailoverRoutingService failoverRoutingService,
+            TenantQuotaService tenantQuotaService,
+            TokenEstimator tokenEstimator,
+            CacheEngine cacheEngine,
+            AgentToolOrchestrator agentToolOrchestrator,
+            ContextManager contextManager,
+            TraceCollector traceCollector
+    ) {
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, agentToolOrchestrator, contextManager, traceCollector, null);
     }
 
     public ChatExecutionService(
@@ -63,7 +87,7 @@ public class ChatExecutionService {
             CacheEngine cacheEngine,
             AgentToolOrchestrator agentToolOrchestrator
     ) {
-        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, agentToolOrchestrator, null);
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, agentToolOrchestrator, null, null, null);
     }
 
     public ChatExecutionService(
@@ -72,7 +96,7 @@ public class ChatExecutionService {
             TokenEstimator tokenEstimator,
             CacheEngine cacheEngine
     ) {
-        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, null, null);
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, null, null, null, null);
     }
 
     public ChatExecutionService(
@@ -80,11 +104,11 @@ public class ChatExecutionService {
             TenantQuotaService tenantQuotaService,
             TokenEstimator tokenEstimator
     ) {
-        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null, null, null);
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, null, null, null, null, null);
     }
 
     public ChatExecutionService(FailoverRoutingService failoverRoutingService) {
-        this(failoverRoutingService, null, new TokenEstimator(), null, null, null);
+        this(failoverRoutingService, null, new TokenEstimator(), null, null, null, null, null);
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request) {
@@ -92,32 +116,92 @@ public class ChatExecutionService {
     }
 
     public ChatCompletionResponse executeSync(ChatCompletionRequest request, QuotaReservation reservation) {
-        ChatCompletionRequest effectiveRequest = (contextManager != null) ? contextManager.manageContext(request) : request;
+        String tenantId = (reservation != null && reservation.tenantId() != null)
+                ? reservation.tenantId()
+                : (TraceContext.getCurrent() != null && TraceContext.getCurrent().tenantId() != null
+                    ? TraceContext.getCurrent().tenantId() : "default");
+
+        ChatCompletionRequest sessionRequest = (sessionManager != null)
+                ? sessionManager.mergeSessionHistory(request, tenantId)
+                : request;
+        ChatCompletionRequest effectiveRequest = (contextManager != null)
+                ? contextManager.manageContext(sessionRequest)
+                : sessionRequest;
+
+        long startTimeMs = System.currentTimeMillis();
+        TraceContext traceCtx = TraceContext.getCurrent();
+        LlmSpan span = new LlmSpan("chat_completion_sync", traceCtx, effectiveRequest.model());
+        span.start(startTimeMs);
+        span.setStream(false);
+        if (effectiveRequest.tools() != null && !effectiveRequest.tools().isEmpty()) {
+            effectiveRequest.tools().forEach(t -> span.addToolInvoked(t.name()));
+        }
+
         try {
             ChatCompletionResponse response;
             if (effectiveRequest.tools() != null && !effectiveRequest.tools().isEmpty() && agentToolOrchestrator != null) {
-                String tenantId = reservation != null ? reservation.tenantId() : "default";
                 response = agentToolOrchestrator.runLoop(failoverRoutingService.getPrimaryClient(), effectiveRequest, tenantId);
             } else {
                 response = failoverRoutingService.chatCompletionWithFailover(effectiveRequest);
             }
+
+            int actualTokens = 0;
+            int promptTokens = 0;
+            int completionTokens = 0;
+            if (response != null && response.usage() != null && response.usage().totalTokens() != null) {
+                actualTokens = response.usage().totalTokens();
+                promptTokens = response.usage().promptTokens() != null ? response.usage().promptTokens() : 0;
+                completionTokens = response.usage().completionTokens() != null ? response.usage().completionTokens() : 0;
+            } else if (tokenEstimator != null && response != null) {
+                promptTokens = tokenEstimator.estimatePromptTokens(effectiveRequest.messages());
+                completionTokens = (response.choices() != null && !response.choices().isEmpty() && response.choices().get(0).message() != null)
+                        ? tokenEstimator.countTokens(response.choices().get(0).message().content()) : 0;
+                actualTokens = promptTokens + completionTokens;
+            }
+
             if (tenantQuotaService != null && reservation != null) {
-                int actualTokens = 0;
-                if (response != null && response.usage() != null && response.usage().totalTokens() != null) {
-                    actualTokens = response.usage().totalTokens();
-                } else if (tokenEstimator != null && response != null) {
-                    int promptTokens = tokenEstimator.estimatePromptTokens(effectiveRequest.messages());
-                    int completionTokens = (response.choices() != null && !response.choices().isEmpty() && response.choices().get(0).message() != null)
-                            ? tokenEstimator.countTokens(response.choices().get(0).message().content()) : 0;
-                    actualTokens = promptTokens + completionTokens;
-                }
                 tenantQuotaService.settle(reservation, actualTokens);
             }
             if (cacheEngine != null && response != null) {
                 cacheEngine.put(effectiveRequest, response);
             }
+
+            if (sessionManager != null && request.sessionId() != null && !request.sessionId().isBlank()) {
+                List<ChatMessage> turnToPersist = new ArrayList<>();
+                if (request.messages() != null) {
+                    for (ChatMessage m : request.messages()) {
+                        if (!"system".equalsIgnoreCase(m.role())) {
+                            turnToPersist.add(m);
+                        }
+                    }
+                }
+                if (response != null && response.choices() != null && !response.choices().isEmpty()) {
+                    ChatMessage asst = response.choices().get(0).message();
+                    if (asst != null) {
+                        turnToPersist.add(asst);
+                    }
+                }
+                if (!turnToPersist.isEmpty()) {
+                    sessionManager.appendMessages(tenantId, request.sessionId(), turnToPersist);
+                }
+            }
+
+            long endTimeMs = System.currentTimeMillis();
+            span.finish(endTimeMs, promptTokens, completionTokens);
+            if (traceCollector != null) {
+                traceCollector.collect(span);
+            }
+            RequestAuditLogger.logAudit(span, 200);
+
             return response;
         } catch (Exception e) {
+            long endTimeMs = System.currentTimeMillis();
+            span.finish(endTimeMs, 0, 0);
+            if (traceCollector != null) {
+                traceCollector.collect(span);
+            }
+            RequestAuditLogger.logAudit(span, 500, e.getMessage());
+
             if (tenantQuotaService != null && reservation != null) {
                 tenantQuotaService.release(reservation);
             }
@@ -130,7 +214,25 @@ public class ChatExecutionService {
     }
 
     public SseEmitter executeStream(ChatCompletionRequest request, QuotaReservation reservation) {
-        ChatCompletionRequest effectiveRequest = (contextManager != null) ? contextManager.manageContext(request) : request;
+        String tenantId = (reservation != null && reservation.tenantId() != null)
+                ? reservation.tenantId()
+                : (TraceContext.getCurrent() != null && TraceContext.getCurrent().tenantId() != null
+                    ? TraceContext.getCurrent().tenantId() : "default");
+
+        ChatCompletionRequest sessionRequest = (sessionManager != null)
+                ? sessionManager.mergeSessionHistory(request, tenantId)
+                : request;
+        ChatCompletionRequest effectiveRequest = (contextManager != null)
+                ? contextManager.manageContext(sessionRequest)
+                : sessionRequest;
+
+        long startTimeMs = System.currentTimeMillis();
+        TraceContext traceCtx = TraceContext.getCurrent();
+        LlmSpan span = new LlmSpan("chat_completion_stream", traceCtx, effectiveRequest.model());
+        span.start(startTimeMs);
+        span.setStream(true);
+        final AtomicBoolean firstChunkRecorded = new AtomicBoolean(false);
+
         final StreamCancellationHandle[] handleHolder = new StreamCancellationHandle[1];
         final AtomicInteger generatedTokens = new AtomicInteger(0);
         final AtomicReference<StringBuilder> streamContentAcc = new AtomicReference<>(new StringBuilder());
@@ -157,6 +259,9 @@ public class ChatExecutionService {
                 effectiveRequest,
                 chunk -> {
                     try {
+                        if (firstChunkRecorded.compareAndSet(false, true)) {
+                            span.recordFirstToken(System.currentTimeMillis());
+                        }
                         if (chunk != null) {
                             if (chunk.usage() != null && chunk.usage().totalTokens() != null) {
                                 generatedTokens.set(chunk.usage().totalTokens());
@@ -194,6 +299,31 @@ public class ChatExecutionService {
                             );
                             cacheEngine.put(effectiveRequest, streamResponse);
                         }
+
+                        if (sessionManager != null && request.sessionId() != null && !request.sessionId().isBlank()) {
+                            List<ChatMessage> turnToPersist = new ArrayList<>();
+                            if (request.messages() != null) {
+                                for (ChatMessage m : request.messages()) {
+                                    if (!"system".equalsIgnoreCase(m.role())) {
+                                        turnToPersist.add(m);
+                                    }
+                                }
+                            }
+                            if (streamContentAcc.get().length() > 0) {
+                                turnToPersist.add(ChatMessage.assistant(streamContentAcc.get().toString()));
+                            }
+                            if (!turnToPersist.isEmpty()) {
+                                sessionManager.appendMessages(tenantId, request.sessionId(), turnToPersist);
+                            }
+                        }
+
+                        long endTimeMs = System.currentTimeMillis();
+                        span.finish(endTimeMs, promptTokens, generatedTokens.get());
+                        if (traceCollector != null) {
+                            traceCollector.collect(span);
+                        }
+                        RequestAuditLogger.logAudit(span, 200);
+
                         emitter.send(SseEmitter.event().data("[DONE]"));
                         emitter.complete();
                     } catch (IOException e) {
@@ -201,15 +331,22 @@ public class ChatExecutionService {
                     }
                 },
                 ex -> {
+                    int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(effectiveRequest.messages()) : 0;
+                    int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : 0;
                     if (tenantQuotaService != null && reservation != null) {
-                        int promptTokens = tokenEstimator != null ? tokenEstimator.estimatePromptTokens(effectiveRequest.messages()) : 0;
-                        int totalTokens = generatedTokens.get() > 0 ? (promptTokens + generatedTokens.get()) : 0;
                         if (totalTokens > 0) {
                             tenantQuotaService.settle(reservation, totalTokens);
                         } else {
                             tenantQuotaService.release(reservation);
                         }
                     }
+                    long endTimeMs = System.currentTimeMillis();
+                    span.finish(endTimeMs, promptTokens, generatedTokens.get());
+                    if (traceCollector != null) {
+                        traceCollector.collect(span);
+                    }
+                    RequestAuditLogger.logAudit(span, 500, ex.getMessage());
+
                     emitter.completeWithError(ex);
                 }
         );

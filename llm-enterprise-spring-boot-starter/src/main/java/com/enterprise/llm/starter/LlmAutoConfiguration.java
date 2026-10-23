@@ -38,6 +38,8 @@ import com.enterprise.llm.tenant.InMemoryTenantStorageProvider;
 import com.enterprise.llm.tenant.TenantService;
 import com.enterprise.llm.tenant.TenantStorageProvider;
 import com.enterprise.llm.token.TokenEstimator;
+import com.enterprise.llm.trace.LangfuseTraceExporter;
+import com.enterprise.llm.trace.TraceCollector;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -71,13 +73,20 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.memory.WorkingMemoryManager.class)
+    public com.enterprise.llm.memory.WorkingMemoryManager workingMemoryManager(ObjectProvider<EmbeddingClient> embeddingClientProvider) {
+        return new com.enterprise.llm.memory.WorkingMemoryManager(embeddingClientProvider.getIfAvailable());
+    }
+
+    @Bean
     @ConditionalOnMissingBean(ContextManager.class)
     public ContextManager contextManager(
             ContextBudgetProperties properties,
             TokenEstimator tokenEstimator,
-            ContextDistiller contextDistiller
+            ContextDistiller contextDistiller,
+            ObjectProvider<com.enterprise.llm.memory.WorkingMemoryManager> workingMemoryManagerProvider
     ) {
-        return new ContextManager(properties, tokenEstimator, contextDistiller);
+        return new ContextManager(properties, tokenEstimator, contextDistiller, workingMemoryManagerProvider.getIfAvailable());
     }
 
     @Bean
@@ -220,5 +229,29 @@ public class LlmAutoConfiguration {
                 topK,
                 minScore
         );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(TraceCollector.class)
+    public TraceCollector traceCollector() {
+        return new TraceCollector();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(LangfuseTraceExporter.class)
+    public LangfuseTraceExporter langfuseTraceExporter() {
+        return new LangfuseTraceExporter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.session.SessionStorageProvider.class)
+    public com.enterprise.llm.session.SessionStorageProvider sessionStorageProvider() {
+        return new com.enterprise.llm.session.InMemorySessionStorageProvider();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.session.SessionManager.class)
+    public com.enterprise.llm.session.SessionManager sessionManager(com.enterprise.llm.session.SessionStorageProvider sessionStorageProvider) {
+        return new com.enterprise.llm.session.SessionManager(sessionStorageProvider);
     }
 }

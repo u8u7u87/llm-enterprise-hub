@@ -45,3 +45,29 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_tenant ON agent_tasks(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);
+
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    session_id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    user_id TEXT,
+    title TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_tenant ON chat_sessions(tenant_id);
+
+CREATE TABLE IF NOT EXISTS chat_session_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT,
+    tool_calls_json TEXT,
+    tool_call_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_session_messages(tenant_id, session_id, id);
+

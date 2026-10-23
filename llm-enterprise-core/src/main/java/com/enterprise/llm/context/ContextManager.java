@@ -19,25 +19,41 @@ public class ContextManager {
     private final ContextBudgetProperties properties;
     private final TokenEstimator tokenEstimator;
     private final ContextDistiller contextDistiller;
+    private final com.enterprise.llm.memory.WorkingMemoryManager workingMemoryManager;
 
     @Autowired
     public ContextManager(
             ContextBudgetProperties properties,
             TokenEstimator tokenEstimator,
-            ContextDistiller contextDistiller
+            ContextDistiller contextDistiller,
+            @Autowired(required = false) com.enterprise.llm.memory.WorkingMemoryManager workingMemoryManager
     ) {
         this.properties = properties != null ? properties : new ContextBudgetProperties();
         this.tokenEstimator = tokenEstimator != null ? tokenEstimator : new TokenEstimator();
         this.contextDistiller = contextDistiller != null ? contextDistiller : new HeuristicContextDistiller();
+        this.workingMemoryManager = workingMemoryManager;
+    }
+
+    public ContextManager(
+            ContextBudgetProperties properties,
+            TokenEstimator tokenEstimator,
+            ContextDistiller contextDistiller
+    ) {
+        this(properties, tokenEstimator, contextDistiller, null);
     }
 
     public ContextManager() {
-        this(new ContextBudgetProperties(), new TokenEstimator(), new HeuristicContextDistiller());
+        this(new ContextBudgetProperties(), new TokenEstimator(), new HeuristicContextDistiller(), null);
     }
 
     public ChatCompletionRequest manageContext(ChatCompletionRequest request, int targetMaxTokens) {
         if (!properties.isEnabled() || request == null || request.messages() == null || request.messages().isEmpty()) {
             return request;
+        }
+
+        // Pre-step: Rehydrate working memory if user query is semantically relevant
+        if (workingMemoryManager != null) {
+            request = workingMemoryManager.recallAndRehydrate(request, 0.4);
         }
 
         int maxTokens = targetMaxTokens > 0 ? targetMaxTokens : properties.getMaxContextTokens();
@@ -55,11 +71,12 @@ public class ContextManager {
 
         // Phase 1: Tool Message Pruning
         if (properties.isToolPruningEnabled()) {
-            messages = pruneOldToolMessages(messages);
+            messages = pruneOldToolMessages(messages, request.sessionId());
             currentTokens = tokenEstimator.estimatePromptTokens(messages);
             if (currentTokens + properties.getReservedResponseTokens() <= triggerThreshold) {
                 log.info("Tool pruning successfully reduced tokens to {}. Target reached.", currentTokens);
-                return copyWithMessages(request, messages);
+                ChatCompletionRequest prunedReq = copyWithMessages(request, messages);
+                return (workingMemoryManager != null) ? workingMemoryManager.recallAndRehydrate(prunedReq, 0.3) : prunedReq;
             }
         }
 
@@ -68,7 +85,8 @@ public class ContextManager {
         int finalTokens = tokenEstimator.estimatePromptTokens(messages);
         log.info("Context distillation complete. Tokens reduced from {} to {}.", currentTokens, finalTokens);
 
-        return copyWithMessages(request, messages);
+        ChatCompletionRequest compacted = copyWithMessages(request, messages);
+        return (workingMemoryManager != null) ? workingMemoryManager.recallAndRehydrate(compacted, 0.3) : compacted;
     }
 
     public ChatCompletionRequest manageContext(ChatCompletionRequest request) {
@@ -80,12 +98,16 @@ public class ContextManager {
             return request;
         }
         log.warn("Emergency compaction triggered! Aggressively reducing context...");
-        List<ChatMessage> pruned = pruneOldToolMessages(new ArrayList<>(request.messages()));
+        List<ChatMessage> pruned = pruneOldToolMessages(new ArrayList<>(request.messages()), request.sessionId());
         List<ChatMessage> distilled = applySlidingWindowAndDistill(pruned);
         return copyWithMessages(request, distilled);
     }
 
     private List<ChatMessage> pruneOldToolMessages(List<ChatMessage> messages) {
+        return pruneOldToolMessages(messages, null);
+    }
+
+    private List<ChatMessage> pruneOldToolMessages(List<ChatMessage> messages, String sessionId) {
         List<ChatMessage> result = new ArrayList<>();
         int size = messages.size();
         for (int i = 0; i < size; i++) {
@@ -93,8 +115,18 @@ public class ContextManager {
             // Only prune tool messages that are older than the last 2 turns
             if ("tool".equalsIgnoreCase(msg.role()) && (i < size - 2)) {
                 if (msg.content() != null && msg.content().length() > properties.getToolPruningThresholdChars()) {
-                    String collapsed = "{\"status\":\"success\",\"summary\":\"[Earlier tool output pruned for context token efficiency, length: "
-                            + msg.content().length() + " chars]\"}";
+                    String collapsed;
+                    if (workingMemoryManager != null) {
+                        collapsed = workingMemoryManager.offload(
+                                sessionId,
+                                msg.content(),
+                                "tool",
+                                "[Earlier tool output pruned for context token efficiency, length: " + msg.content().length() + " chars]"
+                        );
+                    } else {
+                        collapsed = "{\"status\":\"success\",\"summary\":\"[Earlier tool output pruned for context token efficiency, length: "
+                                + msg.content().length() + " chars]\"}";
+                    }
                     result.add(ChatMessage.tool(msg.toolCallId(), collapsed));
                     continue;
                 }
@@ -151,7 +183,9 @@ public class ContextManager {
                 original.temperature(),
                 original.maxTokens(),
                 original.tools(),
-                original.toolChoice()
+                original.toolChoice(),
+                original.sessionId(),
+                original.user()
         );
     }
 }

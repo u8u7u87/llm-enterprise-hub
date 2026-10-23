@@ -119,8 +119,13 @@ public class LlmToolBeanPostProcessor implements BeanPostProcessor {
             return objectMapper.writeValueAsString(result);
         };
 
-        registry.registerTool(definition, handler);
-        log.info("Registered @LlmTool [{}] from bean [{}] method [{}]", toolName, bean.getClass().getSimpleName(), method.getName());
+        Set<String> allowedTenants = (annotation.allowedTenants() != null && annotation.allowedTenants().length > 0)
+                ? Set.of(annotation.allowedTenants()) : Collections.emptySet();
+        Set<String> scopes = (annotation.scopes() != null && annotation.scopes().length > 0)
+                ? Set.of(annotation.scopes()) : Collections.emptySet();
+        registry.registerTool(definition, handler, allowedTenants, scopes);
+        log.info("Registered @LlmTool [{}] from bean [{}] method [{}] (tenants: {}, scopes: {})",
+                toolName, bean.getClass().getSimpleName(), method.getName(), allowedTenants, scopes);
     }
 
     private String mapJavaTypeToJsonSchemaType(Class<?> clazz) {

@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-133%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-139%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -14,7 +14,7 @@
 ## 目录导航
 
 - [系统架构全景](#-系统架构全景)
-- [代码目录与包结构详解](#-代码目录与包结构详解)
+- [工程模块拓扑与代码目录详解](#-工程模块拓扑与代码目录详解)
 - [核心能力体系剖析](#-核心能力体系剖析)
   - [1. 智能云边故障转移与熔断降级](#1-智能云边故障转移与熔断降级)
   - [2. 精细化多租户治理体系](#2-精细化多租户治理体系)
@@ -25,6 +25,7 @@
   - [7. 零依赖内嵌现代 Web 运维监控看板](#7-零依赖内嵌现代-web-运维监控看板)
   - [8. 上下文预算管理、修剪与语义提炼 (Context Distillation)](#8-上下文预算管理修剪与语义提炼-context-distillation)
   - [9. 大厂生产级大模型异常分级体系与故障自愈](#9-大厂生产级大模型异常分级体系与故障自愈)
+  - [10. 工程多模块解耦与 Spring AI 式工具化开发体验](#10-工程多模块解耦与-spring-ai-式工具化开发体验)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -88,127 +89,49 @@ flowchart TD
 
 ---
 
-## 📂 代码目录与包结构详解
+## 📂 工程模块拓扑与代码目录详解
 
-项目遵循标准的 Maven / Spring Boot 最佳分层架构，所有源码位于 `com.enterprise.llm` 命名空间下：
+项目基于 Maven 多模块 (Multi-Module Reactor) 架构分层设计，实现**纯领域模型、Spring Boot Starter 自动装配、独立网关服务与业务集成范例**的彻底解耦：
 
-```
-src/main/java/com/enterprise/llm/
-├── LlmEnterpriseHubApplication.java      # Spring Boot 应用程序主启动类
-├── admin/                               # 管理员控制面与运营统计分析
-│   ├── AdminAnalyticsOverview.java      # 运营大盘聚合统计 VO
-│   ├── AdminController.java             # 管理员 REST 接口 (/v1/admin/tenants, /analytics, /metrics)
-│   ├── AdminProperties.java             # 管理员配置属性 (admin.secret-key)
-│   └── AnalyticsService.java            # 租户运营指标分析业务逻辑
-├── agent/                               # ReAct 智能体工具调度与沙箱执行
-│   ├── AgentToolOrchestrator.java       # 多轮工具调用自动化调度引擎 (ReAct 闭环)
-│   ├── ToolCall.java                    # OpenAI 兼容工具调用数据结构
-│   ├── ToolDefinition.java              # 工具元数据与 JSON Schema 参数定义
-│   ├── ToolHandler.java                 # 工具执行函数接口
-│   ├── ToolRegistry.java                # 工具注册中心 (单例管理)
-│   └── task/                            # Agent 任务状态机与断点续跑
-│       ├── AgentTaskController.java     # Agent 任务查看与恢复控制面 (/v1/agent/tasks)
-│       ├── AgentTaskEntity.java         # 任务持久化实体 (SQLite 表映射)
-│       ├── AgentTaskManager.java        # 任务生命周期管理、Checkpoint 暂存与跳步恢复
-│       ├── AgentTaskRepository.java      # 任务持久化存储库 (Spring Data JDBC)
-│       └── AgentTaskStatus.java         # 任务状态机枚举 (PENDING, RUNNING, COMPLETED, SUSPENDED, FAILED)
-├── auth/                                # 鉴权与安全上下文
-│   ├── ApiKeyAuthenticationFilter.java  # HTTP Header 密钥拦截校验过滤器 (支持 Bearer 与 X-API-Key)
-│   └── TenantSecurityContext.java       # 基于 ThreadLocal 的当前租户安全上下文
-├── cache/                               # 租户隔离两级缓存加速引擎
-│   ├── CacheEngine.java                 # 两级缓存核心 (L1 Exact Hash + L2 Semantic Jaccard)
-│   ├── CacheEntry.java                  # 缓存条目实体 (携带租户 ID、过期时间戳与 TTL)
-│   └── CacheProperties.java             # 缓存配置属性 (cache.enabled, semantic-threshold, ttl)
-├── client/                              # 上游模型 HTTP 适配层
-│   ├── LlmClient.java                   # 统一大模型客户端抽象接口
-│   ├── LlmErrorParser.java              # 上游错误响应语义解析器 (OpenAI 错误体映射)
-│   ├── OpenAiCompatibleLlmClient.java   # OpenAI 规范适配器 (支持普通响应、SSE 打字机流式、反压取消)
-│   └── StreamCancellationHandle.java    # 流式反压取消句柄
-├── config/                              # Spring 容器配置与 Bean 自动装配
-│   └── LlmConfiguration.java            # Primary/Fallback LLM 及 EmbeddingClient 生产装配
-├── context/                             # 企业级长上下文管理、修剪与语义提炼
-│   ├── ContextBudgetProperties.java     # 预算窗口与压缩水位线配置
-│   ├── ContextDistiller.java            # 会话语义提炼抽象接口
-│   ├── ContextManager.java              # 三阶段治理引擎与爆窗现场自愈压缩
-│   └── HeuristicContextDistiller.java   # 启发式高性能本地会话摘要提炼器
-├── controller/                          # 网关流量核心入口
-│   └── ChatCompletionController.java    # /v1/chat/completions 兼容接口、全局异常标准化与调度
-├── exception/                           # 大厂级大模型强类型异常分类体系
-│   ├── LlmException.java                # 异常顶层抽象基类 (statusCode, errorCode, errorType, retryable)
-│   ├── LlmAuthenticationException.java  # 401/403 鉴权失败与凭证失效 (非重试)
-│   ├── LlmContentFilterException.java   # 400 内容安全拦截与合规审查 (非重试快速阻断)
-│   ├── LlmContextLengthExceededException.java # 400 上下文超限 (可现场自愈重试)
-│   ├── LlmInvalidRequestException.java  # 400 请求格式与参数校验错误
-│   ├── LlmRateLimitException.java       # 429 频率超限 (携带 Retry-After 毫秒)
-│   └── LlmServerException.java          # 5xx 上游宕机与网络超时抖动 (重试/熔断切换)
-├── guard/                               # 全链路安全防护体系
-│   ├── CrossTenantViolationException.java# 跨租户越权异常
-│   ├── OutputGuardrailService.java      # 出口 DLP 敏感信息脱敏处理器
-│   ├── PromptGuardrailService.java      # 入口提示词注入防御守门器
-│   ├── SecurityViolationException.java  # 安全策略违规异常
-│   ├── ToolAction.java                  # 工具调用动作抽象
-│   ├── ToolActionGatekeeper.java        # 工具调用权限守门员 (危险指令拦截与跨租户隔离)
-│   ├── dlp/                             # 数据防泄漏规则可插拔架构
-│   │   ├── DlpMaskType.java             # 脱敏模式 (REPLACE_TAG, MASK_MIDDLE)
-│   │   ├── DlpPolicyProperties.java     # DLP 配置文件映射
-│   │   ├── DlpRule.java                 # 单条脱敏规则模型
-│   │   ├── DlpRuleProvider.java         # 规则提供者顶层接口
-│   │   └── PropertiesDlpRuleProvider.java# 配置文件规则加载器
-│   ├── prompt/                          # 提示词注入规则可插拔架构
-│   │   ├── PromptRuleProvider.java      # 规则提供者接口
-│   │   ├── PromptSecurityProperties.java# 提示词防护规则配置映射 (security.guardrail.prompt.*)
-│   │   └── PropertiesPromptRuleProvider.java# 规则动态编译与加载器
-│   └── tool/                            # 工具安全策略架构
-│       ├── PropertiesToolPolicyProvider.java# 工具安全配置加载器
-│       ├── ToolPolicyProperties.java    # 危险指令与租户字段配置
-│       └── ToolPolicyProvider.java      # 策略提供者接口
-├── metrics/                             # 时序监控与指标记录
-│   ├── MetricsRecordService.java        # 内存环形滑动窗口 + SQLite 定时批量刷盘服务
-│   └── SystemMetricPoint.java           # 分钟级监控指标点实体
-├── model/                               # 协议标准 DTO/VO (全符合 OpenAI 接口规范)
-│   ├── ChatCompletionChunk.java         # SSE 流式返回分块
-│   ├── ChatCompletionRequest.java       # 对话请求体 (支持 stream, temperature, tools 等)
-│   ├── ChatCompletionResponse.java      # 对话响应体
-│   ├── ChatMessage.java                 # 会话消息载体 (user, assistant, system, tool)
-│   └── Usage.java                       # Token 消耗统计
-├── quota/                               # 租户配额与防穿透预扣
-│   ├── QuotaExceededException.java      # 配额溢出异常 (HTTP 429)
-│   ├── QuotaReservation.java            # 预扣凭证句柄 (支持 tryReserve, settle, release)
-│   └── TenantQuotaService.java          # 配额生命周期原子管理业务
-├── rag/                                 # 企业级 RAG 检索流水线
-│   ├── KnowledgeBaseController.java     # 知识库管理 REST 接口 (/v1/knowledge/documents, /search)
-│   ├── PromptAugmentor.java             # 系统提示词上下文结构化注入器
-│   ├── RagPipelineService.java          # 网关前置检索流水线中枢
-│   ├── chunk/                           # 文档切片分块
-│   │   └── TextChunker.java             # 自然语义感知分块器 (句子标点断句 + Overlap)
-│   ├── embedding/                       # 向量化客户端
-│   │   ├── EmbeddingClient.java         # 向量化接口定义
-│   │   └── OpenAiCompatibleEmbeddingClient.java # OpenAI / Ollama 兼容向量化批处理实现
-│   ├── model/                           # RAG 领域模型
-│   │   ├── DocumentChunk.java           # 文档切片模型 (包含向量与元数据)
-│   │   └── SearchResult.java            # 相似度召回命中结果
-│   └── store/                           # 向量数据库存储抽象
-│       ├── MilvusVectorStore.java       # Milvus 2.x RESTful 直连引擎 (强制标量过滤 + 内存余弦回退)
-│       └── VectorStore.java             # 向量数据库通用 CRUD 接口
-├── ratelimit/                           # QPS 平滑限流
-│   └── TenantRateLimiter.java           # 租户级令牌桶算法实现
-├── router/                              # 路由与高可用
-│   └── FailoverRoutingService.java      # 主备故障转移、重试及状态机熔断器 (Circuit Breaker)
-├── service/                             # 核心领域编排
-│   └── ChatExecutionService.java        # 会话推理执行生命周期串联服务
-├── template/                            # 模板引擎
-│   └── PromptTemplateEngine.java        # 提示词变量插值处理引擎
-├── tenant/                              # 租户持久化与管理
-│   ├── TenantEntity.java                # 租户实体 (映射 SQLite tenants 表)
-│   ├── TenantRepository.java            # 租户持久化存储层 (Spring Data JDBC)
-│   └── TenantService.java               # 租户认证与维护业务
-├── token/                               # Token 编解码与预估
-│   └── TokenEstimator.java              # 基于 BPE 算法的精确 Token 统计器
-└── trace/                               # 分布式链路追踪
-    ├── LangfuseTraceExporter.java       # 导出追踪至 Langfuse 平台
-    ├── LlmSpan.java                     # 追踪 Span 跨度
-    ├── TraceCollector.java              # 追踪数据收集器
-    └── TraceContext.java                # 链路上下文
+```text
+llm-enterprise-hub/                      # Maven 聚合根工程 (pom 打包)
+├── llm-enterprise-core/                 # 核心领域模型与算法纯净库 (零 Web 依赖，纯 POJO)
+│   └── src/main/java/com/enterprise/llm/
+│       ├── agent/                       # ReAct 工具编排、ToolRegistry、@LlmTool 注解定义与 Task SPI
+│       ├── cache/                       # L1 Hash + L2 语义两级缓存引擎
+│       ├── client/                      # LlmClient、LlmErrorParser 上游统一调用层
+│       ├── context/                     # 上下文预算管理、修剪与语义提炼 (ContextManager)
+│       ├── exception/                   # 大模型强类型异常分类 (可重试/阻断/自愈)
+│       ├── guard/                       # 出口 DLP 脱敏、入口注入防御、工具越权沙箱
+│       ├── model/                       # OpenAI 协议兼容标准 DTO/VO (ChatMessage, ToolCall 等)
+│       ├── quota/                       # 租户配额原子预扣与结算 (TenantQuotaService)
+│       ├── rag/                         # 语义分块、向量化与 Milvus 存储抽象
+│       ├── ratelimit/                   # 租户级令牌桶平滑限流 (TenantRateLimiter)
+│       ├── router/                      # 云边故障转移、指数退避重试与熔断器 (FailoverRoutingService)
+│       └── tenant/                      # 租户领域模型与存储 SPI (TenantStorageProvider)
+│
+├── llm-enterprise-spring-boot-starter/  # 开发者体验与自动配置中枢 (对标 Spring AI)
+│   └── src/main/java/com/enterprise/llm/starter/
+│       ├── EnableLlmEnterprise.java     # 一键开启企业级模型能力注解
+│       ├── LlmAutoConfiguration.java    # 全局组件条件化自动装配 (@ConditionalOnMissingBean)
+│       └── annotation/
+│           └── LlmToolBeanPostProcessor.java # 自动反射扫描 @LlmTool 生成 JSON Schema 并注册
+│
+├── llm-enterprise-gateway-server/       # 开箱即用的独立网关服务 (生产可执行程序)
+│   └── src/main/java/com/enterprise/llm/
+│       ├── LlmEnterpriseHubApplication.java # Spring Boot 启动主类
+│       ├── admin/                       # 运营大盘与租户管理控制面 (/v1/admin/*)
+│       ├── auth/                        # ApiKeyAuthenticationFilter 鉴权过滤器
+│       ├── controller/                  # ChatCompletionController (/v1/chat/completions)
+│       ├── metrics/                     # 分钟级滑动窗口时序指标与 SQLite 持久化
+│       ├── repository/                  # SQLite 租户表与 Agent 任务表存储实现
+│       └── resources/static/index.html  # 零依赖现代 Web 运维监控大盘
+│
+└── samples/sample-business-app/         # 独立业务微服务集成范例
+    └── src/main/java/com/sample/app/
+        ├── SampleBusinessApplication.java # 标注 @EnableLlmEnterprise 即可注入一切模型能力
+        ├── service/OrderService.java     # 业务代码直接标注 @LlmTool 自动接入智能体
+        └── controller/DemoAssistantController.java # 验证直接调用工具与上下文提炼
 ```
 
 ---
@@ -288,6 +211,46 @@ src/main/java/com/enterprise/llm/
 - **动态指数退避重试 (Exponential Backoff with Jitter)**：命中 429 限流时，自动解析 `Retry-After` 或 `retry-after-ms` 响应头，在 Java 21 虚拟线程内执行带抖动的指数退避重试，平滑削峰。
 - **400 爆窗紧急压缩现场自愈 (`Emergency Compaction Recovery`)**：当主模型返回 `context_length_exceeded` 异常时，网关不盲目重试相同载荷，而是立即调用 `ContextManager.forceEmergencyCompaction(request)` 触发紧急折叠并就地原位重试，彻底解决突发大 Prompt 导致的爆窗宕机。
 - **安全快速失败与标准化 OpenAI 错误输出**：遇到 401 凭证失效或 400 内容安全违规时，阻断向 Fallback 本地模型切换，通过 `ChatCompletionController` 统一以标准 OpenAI 错误 JSON（包含 `message`、`type`、`code`）和正确 HTTP 状态码返回给客户端，绝不向外暴露 Java 异常堆栈。
+
+### 10. 工程多模块解耦与 Spring AI 式工具化开发体验
+为了支持企业级灵活定制开发、自主迁移与轻量嵌入，系统全面完成了三层 Maven 架构解耦，提供对标 **Spring AI** 的开箱即用开发体验：
+
+#### 模块定位与职责分工
+| 模块名 | 类型 | 职责范围 | 核心依赖 |
+| :--- | :--- | :--- | :--- |
+| **`llm-enterprise-core`** | 纯领域内核 | 领域模型、长上下文预算与提炼、两级缓存、故障转移路由、ReAct 调度器、安全护栏、Token 计算与存储 SPI 抽象 | 零 Web 依赖、纯 POJO |
+| **`llm-enterprise-spring-boot-starter`** | 自动装配 SDK | `@EnableLlmEnterprise`、`@LlmTool` 注解扫描器、`LlmAutoConfiguration`、模型客户端自动配置 | Spring Boot 自动装配中枢 |
+| **`llm-enterprise-gateway-server`** | 独立网关服务 | OpenAI 兼容 REST 端点、多租户 SQLite 鉴权与配额持久化、Web 实时监控看板 | 可直接部署的生产微服务 |
+| **`samples/sample-business-app`** | 业务接入示例 | 演示外部微服务引入 Starter、使用 `@LlmTool` 声明业务方法、自动注册到工具池与 ReAct 调度的完整流程 | 业务开发最佳范例 |
+
+#### `@LlmTool` 注解驱动函数调用开发范式
+外部业务应用无需编写冗长复杂的 OpenAI Function Calling JSON Schema，只需在任意 Spring Bean 的方法上标注 `@LlmTool` 与 `@LlmToolParam`，即可在应用启动时由 `LlmToolBeanPostProcessor` 自动反射识别、生成参数 Schema 并注册到全局 `ToolRegistry`：
+
+```java
+@Service
+public class OrderService {
+
+    @LlmTool(name = "query_order_status", description = "查询企业订单物流、承运商与支付状态")
+    public Map<String, Object> queryOrderStatus(
+            @LlmToolParam(name = "orderId", description = "订单唯一标识号 (如 ORD-1001)", required = true)
+            String orderId
+    ) {
+        return Map.of("orderId", orderId, "status", "IN_TRANSIT", "carrier", "SF-Express");
+    }
+}
+```
+
+#### 外部微服务接入三步法
+1. **引入依赖**：
+   ```xml
+   <dependency>
+       <groupId>com.enterprise.llm</groupId>
+       <artifactId>llm-enterprise-spring-boot-starter</artifactId>
+       <version>0.0.1-SNAPSHOT</version>
+   </dependency>
+   ```
+2. **开启注解**：在主类标注 `@SpringBootApplication` 与 `@EnableLlmEnterprise`（或依赖 Spring Boot 标准自动装配）。
+3. **注入即用**：直接注入 `ToolRegistry`、`AgentToolOrchestrator`、`LlmClient` 或 `ContextManager`，开箱即享企业级大模型调度与安全治理能力。
 
 ---
 
@@ -551,11 +514,14 @@ docker compose up -d
 在 `llm-enterprise-hub` 根目录下执行：
 
 ```bash
-# 1. 运行全量测试并打包可执行 Jar
+# 1. 运行全量测试并打包所有模块 Jar
 ./mvnw clean package -DskipTests=false
 
-# 2. 启动应用程序 (默认端口 8080)
-java -jar target/llm-enterprise-hub-0.0.1-SNAPSHOT.jar
+# 2. 启动独立网关应用程序 (默认端口 8080)
+java -jar llm-enterprise-gateway-server/target/llm-enterprise-gateway-server-0.0.1-SNAPSHOT.jar
+
+# 3. (可选) 启动示例业务微服务体验 @LlmTool (默认端口 8089)
+java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.jar
 ```
 
 服务启动成功后：
@@ -578,7 +544,9 @@ java -jar target/llm-enterprise-hub-0.0.1-SNAPSHOT.jar
 - 长会话上下文预算管理、工具消息修剪与启发式语义提炼 (`ContextManagerTest`)；
 - 大厂强类型大模型异常分级解析器 (`LlmErrorParserTest`)；
 - 429 指数退避重试、400 爆窗现场自愈与致命错误快速阻断 (`FailoverRoutingResilienceTest`)；
-- 端到端上下文自动压缩与故障自愈全链路 E2E 验证 (`ContextCompactionAndResilienceE2ETest`)。
+- 端到端上下文自动压缩与故障自愈全链路 E2E 验证 (`ContextCompactionAndResilienceE2ETest`)；
+- `@LlmTool` 注解反射扫描与 JSON Schema 自动化生成测试 (`LlmToolAnnotationScanTest`)；
+- 独立业务微服务引入 Starter、工具自动装配与 ReAct 闭环端到端验证 (`SampleBusinessAppTest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -587,8 +555,15 @@ java -jar target/llm-enterprise-hub-0.0.1-SNAPSHOT.jar
 
 **测试运行报告**：
 ```text
-[INFO] Tests run: 133, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
+[INFO] 
+[INFO] llm-enterprise-hub ................................. SUCCESS
+[INFO] llm-enterprise-core ................................ SUCCESS (77 tests)
+[INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (1 test)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (56 tests)
+[INFO] sample-business-app ................................ SUCCESS (5 tests)
+[INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 32.252 s
+[INFO] Total time: 42.758 s
 ```
-**全量 133 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 139 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

@@ -1,0 +1,30 @@
+server:
+  port: 8089
+
+spring:
+  application:
+    name: sample-business-app
+
+llm:
+  provider:
+    base-url: http://localhost:11434/v1
+    api-key: ollama
+  fallback:
+    model: qwen2.5:0.5b
+  cache:
+    enabled: true
+    max-capacity: 500
+    ttl-seconds: 1800
+  context:
+    enabled: true
+    max-context-tokens: 4096
+
+security:
+  guardrail:
+    prompt:
+      enabled: true
+  dlp:
+    enabled: true
+  tools:
+    enabled: true
+    tenant-isolation-enabled: true

@@ -9,6 +9,14 @@ public class LlmRateLimitException extends LlmException {
         this.retryAfterMs = retryAfterMs;
     }
 
+    public LlmRateLimitException(long retryAfterSeconds, String message) {
+        this(message, "rate_limit_exceeded", retryAfterSeconds * 1000L);
+    }
+
+    public LlmRateLimitException(String message) {
+        this(message, "rate_limit_exceeded", 60000L);
+    }
+
     public long getRetryAfterMs() {
         return retryAfterMs;
     }

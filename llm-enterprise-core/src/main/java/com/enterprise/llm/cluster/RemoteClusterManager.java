@@ -41,7 +41,7 @@ public class RemoteClusterManager {
         this.activeNodes = new ConcurrentHashMap<>();
         this.clientCache = new ConcurrentHashMap<>();
         this.loadBalancer = loadBalancer != null ? loadBalancer : new LeastRequestsLoadBalancer();
-        this.clientFactory = clientFactory != null ? clientFactory : node -> new OpenAiCompatibleLlmClient(node.getBaseUrl(), node.getApiKey());
+        this.clientFactory = clientFactory != null ? clientFactory : node -> new OpenAiCompatibleLlmClient(node.getBaseUrl(), node.getApiKeyPool());
     }
 
     public RemoteClusterManager(List<ClusterDiscoveryProvider> discoveryProviders, ClusterLoadBalancer loadBalancer) {

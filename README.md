@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-227%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-241%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -39,6 +39,10 @@
   - [21. 低延时投机对冲竞速路由 (Request Hedging / Speculative Racing)](#21-低延时投机对冲竞速路由-request-hedging--speculative-racing)
   - [22. 远程 GPU 推理集群拓扑自感知与显存感知负载均衡 (vLLM / Triton Cluster)](#22-远程-gpu-推理集群拓扑自感知与显存感知负载均衡-vllm--triton-cluster)
   - [23. 进阶 RAG 知识增强架构 (多轮 Query 改写 + Markdown 结构分块 + 混合重排)](#23-进阶-rag-知识增强架构-多轮-query-改写--markdown-结构分块--混合重排)
+  - [24. 流式智能体闭环编排与 SSE 中间事件透传 (Streaming ReAct Agent Loop)](#24-流式智能体闭环编排与-sse-中间事件透传-streaming-react-agent-loop)
+  - [25. 多 Key 凭据池与 429 智能自愈轮转 (Multi-Key Pool & Tiered Rotation)](#25-多-key-凭据池与-429-智能自愈轮转-multi-key-pool--tiered-rotation)
+  - [26. W3C TraceContext 分布式全链路追踪 (OpenTelemetry traceparent & Correlation)](#26-w3c-tracecontext-分布式全链路追踪-opentelemetry-traceparent--correlation)
+  - [27. RAG 事实忠实度评估与幻觉主动防御 (RAG Groundedness & Faithfulness Guardrail)](#27-rag-事实忠实度评估与幻觉主动防御-rag-groundedness--faithfulness-guardrail)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -436,6 +440,54 @@ public class OrderService {
 
 ---
 
+### 24. 流式智能体闭环编排与 SSE 中间事件透传 (Streaming ReAct Agent Loop)
+
+打破传统 LLM 网关中“流式调用不能使用 Agent 工具”的技术藩篱，支持企业级互动式 Agent 流式闭环交互：
+- **实时 Tool Call 流式累积与重组 (`StreamChunkAccumulator`)**：
+  零拷贝累加解析上游打字机 Chunk 中的 `delta.tool_calls` 片段，在识别到模型完成工具调用声明后自动拦截，安全委托给 `AgentToolOrchestrator` 执行；
+- **事件驱动的 Agent 生命周期推送 (`AgentStreamEvent`)**：
+  向前端打字机无缝广播中间过程自定义 SSE 事件：
+  - `event: tool_call_start`：推送 `{"toolName": "query_order", "arguments": {...}}`，前端可呈现“正在查询数据库...”卡片；
+  - `event: tool_call_result`：推送工具执行耗时与安全审计后的结果内容；
+  - `event: agent_thought`：适配 DeepSeek-R1 / Qwen 推理模型的流式思维链；
+- **多轮流式递归自愈驱动 (`StreamingAgentOrchestrator`)**：
+  自动将工具结果回填历史会话，并发起下一轮上游流式补全，直至模型生成最终回复文本并发送 `data: [DONE]`。
+
+---
+
+### 25. 多 Key 凭据池与 429 智能自愈轮转 (Multi-Key Pool & Tiered Rotation)
+
+对标 Portkey / LiteLLM 凭据池方案，彻底解决大模型公有云 API（Azure OpenAI / DeepSeek / Moonshot）单 Key 极易触发 TPM/RPM 速率限制的痛点：
+- **线程安全凭据资源池 (`ApiKeyPool` & `ApiKeyEntry`)**：
+  单个上游推理节点或模型供应商支持配置多个凭据（如 `sk-k1,sk-k2,sk-k3`），采用平滑 Round-Robin 与 Least-Used 调度并发请求；
+- **429 速率限制智能冷却与无感切换自愈**：
+  当某个 Key 遇到 HTTP 429 时，自动从响应头 `Retry-After`（默认 60s）提取冷却时长并标记该 Key 处于冷却状态；
+  系统在同一虚拟线程内立即透明切换至池中下一个健康 Key 重试，客户端完全无感知；只有当所有 Key 均被限流时才对外抛出异常。
+
+---
+
+### 26. W3C TraceContext 分布式全链路追踪 (OpenTelemetry traceparent & Correlation)
+
+打通企业网关至后端 GPU 推理集群（vLLM、Triton、Ollama）以及下游微服务的全链路分布式调用链：
+- **W3C 分布式标准协议互转 (`TraceContextPropagator`)**：
+  自动生成与解析 W3C 规范的 `traceparent: 00-{32hex_trace_id}-{16hex_span_id}-01` Header，完美对齐 OpenTelemetry、Jaeger 与 Zipkin 生态；
+- **请求透传与全链路关联**：
+  每次向远程 GPU 集群发起同步或 SSE 流式 HTTP 请求时，自动注入 `traceparent`、`X-Request-ID` 以及携带租户与会话的 `baggage` Header，消除全链路调用链断层。
+
+---
+
+### 27. RAG 事实忠实度评估与幻觉主动防御 (RAG Groundedness & Faithfulness Guardrail)
+
+对齐 RAGAS 与 TruLens 等工业级评估框架，在知识生成后置阶段设立合规防线：
+- **高并发极低耗时共现打分引擎 (`RagFaithfulnessEvaluator`)**：
+  耗时小于 5ms，抽取回答中的核心事实命题、数值指标与关键实体，比对召回切片中的事实支撑度，计算 `groundednessScore` (0.0 ~ 1.0)；
+- **三态阶梯式安全门禁 (`FaithfulnessResult`)**：
+  - **`PASS`** (Score $\ge 0.65$)：高可信事实，正常返回；
+  - **`WARN_APPEND`** ($0.40 \le \text{Score} < 0.65$)：轻度事实漂移，在回答末尾追加免责合规提示；
+  - **`REJECT_FALLBACK`** (Score $< 0.40$)：严重虚构幻觉，立即拦截并替换为安全兜底回复，指标无缝上报至 `LlmSpan` 审计链。
+
+---
+
 ## 🔌 全量 RESTful API 规范与示例
 
 所有业务接口均需通过 HTTP Header 提供租户 API Key（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`），管理员接口需提供 `X-Admin-Key: <admin_key>`。
@@ -764,7 +816,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 - 显存最小在途请求与前缀缓存一致性哈希负载均衡算法 (`ClusterLoadBalancerTest`, `RemoteClusterDiscoveryIntegrationTest`)；
 - 多轮对话指代消解与 Query 改写 (`ContextualQueryRewriterTest`)；
 - Markdown 章节面包屑层级结构与表格/代码块感知切片 (`MarkdownStructureChunkerTest`)；
-- 混合重排评分融合与实体精准提权 (`HybridSearchRerankerTest`, `RagPipelineServiceTest`)。
+- 混合重排评分融合与实体精准提权 (`HybridSearchRerankerTest`, `RagPipelineServiceTest`)；
+- W3C 标准分布式链路 Header 转换、透传与反解析 (`TraceContextPropagatorTest`)；
+- 多 API Key 资源池、平滑轮替调度与 429 速率限制冷却自愈 (`ApiKeyPoolTest`)；
+- 流式打字机 Chunk 碎片重组与 Tool Calls 闭环触发 (`StreamChunkAccumulatorTest`)；
+- 流式 ReAct Agent 多轮工具编排与 SSE 中间事件透传 (`StreamingAgentOrchestratorTest`)；
+- RAG 事实忠实度评估、数值命题与 Bi-Gram 校验及三态合规门禁 (`RagFaithfulnessEvaluatorTest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -776,12 +833,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 [INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
 [INFO] 
 [INFO] llm-enterprise-hub ................................. SUCCESS
-[INFO] llm-enterprise-core ................................ SUCCESS (155 tests)
+[INFO] llm-enterprise-core ................................ SUCCESS (168 tests)
 [INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (3 tests)
-[INFO] llm-enterprise-gateway-server ...................... SUCCESS (63 tests)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (64 tests)
 [INFO] sample-business-app ................................ SUCCESS (6 tests)
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 01:01 min
+[INFO] Total time: 58.429 s
 ```
-**全量 227 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 241 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

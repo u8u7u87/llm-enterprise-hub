@@ -29,8 +29,42 @@ public record TraceContext(
 
     public static TraceContext createNew(String traceId, String tenantId, String userId, String sessionId) {
         String effectiveTraceId = (traceId != null && !traceId.isBlank()) ? traceId : UUID.randomUUID().toString();
-        String spanId = UUID.randomUUID().toString().substring(0, 16);
+        String spanId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         return new TraceContext(effectiveTraceId, spanId, null, tenantId, userId, sessionId);
+    }
+
+    public String toW3cTraceparent() {
+        String rawTrace = (traceId != null && !traceId.isBlank()) ? traceId.replace("-", "") : UUID.randomUUID().toString().replace("-", "");
+        String normalizedTrace = normalizeHex(rawTrace, 32);
+
+        String rawSpan = (spanId != null && !spanId.isBlank()) ? spanId.replace("-", "") : UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String normalizedSpan = normalizeHex(rawSpan, 16);
+
+        return String.format("00-%s-%s-01", normalizedTrace, normalizedSpan);
+    }
+
+    public static TraceContext fromW3cTraceparent(String traceparent, String tenantId, String userId, String sessionId) {
+        if (traceparent == null || traceparent.isBlank()) {
+            return createNew(null, tenantId, userId, sessionId);
+        }
+        String[] parts = traceparent.trim().split("-");
+        if (parts.length < 4 || !"00".equals(parts[0])) {
+            return createNew(traceparent, tenantId, userId, sessionId);
+        }
+        String traceId = parts[1];
+        String parentSpanId = parts[2];
+        String newSpanId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        return new TraceContext(traceId, newSpanId, parentSpanId, tenantId, userId, sessionId);
+    }
+
+    private static String normalizeHex(String str, int targetLen) {
+        if (str.length() == targetLen) {
+            return str.toLowerCase();
+        } else if (str.length() > targetLen) {
+            return str.substring(0, targetLen).toLowerCase();
+        } else {
+            return "0".repeat(targetLen - str.length()) + str.toLowerCase();
+        }
     }
 
     public static TraceContext getCurrent() {

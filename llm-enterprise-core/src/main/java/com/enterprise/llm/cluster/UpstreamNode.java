@@ -17,6 +17,7 @@ public class UpstreamNode {
     private final String id;
     private final String baseUrl;
     private final String apiKey;
+    private final ApiKeyPool apiKeyPool;
     private final int weight;
     private final AtomicInteger activeRequests;
     private final AtomicBoolean healthy;
@@ -28,6 +29,20 @@ public class UpstreamNode {
         this.id = id;
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.apiKey = apiKey != null ? apiKey : "";
+        this.apiKeyPool = ApiKeyPool.of(this.apiKey);
+        this.weight = Math.max(1, weight);
+        this.activeRequests = new AtomicInteger(0);
+        this.healthy = new AtomicBoolean(true);
+        this.circuitBreaker = new CircuitBreaker(id);
+        this.supportedModels = ConcurrentHashMap.newKeySet();
+        this.metadata = new ConcurrentHashMap<>();
+    }
+
+    public UpstreamNode(String id, String baseUrl, ApiKeyPool apiKeyPool, int weight) {
+        this.id = id;
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.apiKeyPool = apiKeyPool != null ? apiKeyPool : new ApiKeyPool(Collections.singletonList(""));
+        this.apiKey = this.apiKeyPool.acquireKey().getKey();
         this.weight = Math.max(1, weight);
         this.activeRequests = new AtomicInteger(0);
         this.healthy = new AtomicBoolean(true);
@@ -49,7 +64,14 @@ public class UpstreamNode {
     }
 
     public String getApiKey() {
+        if (apiKeyPool != null && apiKeyPool.size() > 0) {
+            return apiKeyPool.acquireKey().getKey();
+        }
         return apiKey;
+    }
+
+    public ApiKeyPool getApiKeyPool() {
+        return apiKeyPool;
     }
 
     public int getWeight() {

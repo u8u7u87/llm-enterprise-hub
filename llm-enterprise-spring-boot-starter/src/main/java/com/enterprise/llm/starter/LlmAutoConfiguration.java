@@ -252,6 +252,14 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.agent.StreamingAgentOrchestrator.class)
+    public com.enterprise.llm.agent.StreamingAgentOrchestrator streamingAgentOrchestrator(
+            AgentToolOrchestrator agentToolOrchestrator
+    ) {
+        return new com.enterprise.llm.agent.StreamingAgentOrchestrator(agentToolOrchestrator);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator.class)
     public com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator agentSwarmOrchestrator() {
         return new com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator();
@@ -290,10 +298,22 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator.class)
+    public com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator ragFaithfulnessEvaluator(
+            @Value("${rag.guardrail.pass-threshold:0.65}") double passThreshold,
+            @Value("${rag.guardrail.warn-threshold:0.40}") double warnThreshold
+    ) {
+        return new com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator(passThreshold, warnThreshold);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(RagPipelineService.class)
     public RagPipelineService ragPipelineService(
             ObjectProvider<EmbeddingClient> embeddingClientProvider,
             ObjectProvider<VectorStore> vectorStoreProvider,
+            ObjectProvider<com.enterprise.llm.rag.query.QueryRewriter> queryRewriterProvider,
+            ObjectProvider<com.enterprise.llm.rag.rerank.Reranker> rerankerProvider,
+            ObjectProvider<com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator> faithfulnessEvaluatorProvider,
             @Value("${rag.enabled:true}") boolean ragEnabled,
             @Value("${rag.top-k:3}") int topK,
             @Value("${rag.min-score:0.5}") double minScore
@@ -301,6 +321,9 @@ public class LlmAutoConfiguration {
         return new RagPipelineService(
                 embeddingClientProvider.getIfAvailable(),
                 vectorStoreProvider.getIfAvailable(),
+                queryRewriterProvider.getIfAvailable(),
+                rerankerProvider.getIfAvailable(),
+                faithfulnessEvaluatorProvider.getIfAvailable(),
                 ragEnabled,
                 topK,
                 minScore

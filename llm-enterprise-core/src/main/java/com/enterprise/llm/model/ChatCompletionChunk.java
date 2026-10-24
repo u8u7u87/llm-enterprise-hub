@@ -29,7 +29,28 @@ public record ChatCompletionChunk(
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Delta(
             String role,
-            String content
+            String content,
+            List<DeltaToolCall> toolCalls
     ) {
+        public Delta(String role, String content) {
+            this(role, content, null);
+        }
+    }
+
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record DeltaToolCall(
+            Integer index,
+            String id,
+            String type,
+            DeltaFunctionCall function
+    ) {
+        @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public record DeltaFunctionCall(
+                String name,
+                String arguments
+        ) {
+        }
     }
 }

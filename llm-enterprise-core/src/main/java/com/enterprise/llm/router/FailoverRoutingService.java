@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 @Service
-public class FailoverRoutingService {
+public class FailoverRoutingService implements LlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(FailoverRoutingService.class);
 
@@ -368,5 +368,20 @@ public class FailoverRoutingService {
 
     private void recordFailure() {
         circuitBreaker.recordFailure();
+    }
+
+    @Override
+    public ChatCompletionResponse chatCompletion(ChatCompletionRequest request) {
+        return chatCompletionWithFailover(request);
+    }
+
+    @Override
+    public StreamCancellationHandle streamChatCompletion(
+            ChatCompletionRequest request,
+            Consumer<ChatCompletionChunk> onChunk,
+            Runnable onComplete,
+            Consumer<Throwable> onError
+    ) {
+        return streamChatCompletionWithFailover(request, onChunk, onComplete, onError);
     }
 }

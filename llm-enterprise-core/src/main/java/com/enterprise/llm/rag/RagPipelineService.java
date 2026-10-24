@@ -23,6 +23,7 @@ public class RagPipelineService {
     private final PromptAugmentor promptAugmentor;
     private final com.enterprise.llm.rag.query.QueryRewriter queryRewriter;
     private final com.enterprise.llm.rag.rerank.Reranker reranker;
+    private final com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator faithfulnessEvaluator;
     private final boolean ragEnabled;
     private final int topK;
     private final double minScore;
@@ -33,6 +34,7 @@ public class RagPipelineService {
             @Autowired(required = false) VectorStore vectorStore,
             @Autowired(required = false) com.enterprise.llm.rag.query.QueryRewriter queryRewriter,
             @Autowired(required = false) com.enterprise.llm.rag.rerank.Reranker reranker,
+            @Autowired(required = false) com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator faithfulnessEvaluator,
             @Value("${rag.enabled:true}") boolean ragEnabled,
             @Value("${rag.top-k:3}") int topK,
             @Value("${rag.min-score:0.5}") double minScore
@@ -42,9 +44,22 @@ public class RagPipelineService {
         this.promptAugmentor = new PromptAugmentor();
         this.queryRewriter = queryRewriter != null ? queryRewriter : new com.enterprise.llm.rag.query.ContextualQueryRewriter();
         this.reranker = reranker != null ? reranker : new com.enterprise.llm.rag.rerank.HybridSearchReranker();
+        this.faithfulnessEvaluator = faithfulnessEvaluator != null ? faithfulnessEvaluator : new com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator();
         this.ragEnabled = ragEnabled;
         this.topK = topK;
         this.minScore = minScore;
+    }
+
+    public RagPipelineService(
+            EmbeddingClient embeddingClient,
+            VectorStore vectorStore,
+            com.enterprise.llm.rag.query.QueryRewriter queryRewriter,
+            com.enterprise.llm.rag.rerank.Reranker reranker,
+            boolean ragEnabled,
+            int topK,
+            double minScore
+    ) {
+        this(embeddingClient, vectorStore, queryRewriter, reranker, null, ragEnabled, topK, minScore);
     }
 
     public RagPipelineService(
@@ -54,7 +69,7 @@ public class RagPipelineService {
             int topK,
             double minScore
     ) {
-        this(embeddingClient, vectorStore, null, null, ragEnabled, topK, minScore);
+        this(embeddingClient, vectorStore, null, null, null, ragEnabled, topK, minScore);
     }
 
     /**
@@ -125,5 +140,16 @@ public class RagPipelineService {
             log.warn("Failed to retrieve or augment knowledge for tenant {}: {}", tenantId, e.getMessage());
             return request;
         }
+    }
+
+    public com.enterprise.llm.rag.guard.FaithfulnessResult evaluateFaithfulness(List<SearchResult> chunks, String answer) {
+        if (faithfulnessEvaluator != null) {
+            return faithfulnessEvaluator.evaluate(chunks, answer);
+        }
+        return com.enterprise.llm.rag.guard.FaithfulnessResult.pass(1.0, answer, 0, 0, "Faithfulness guardrail not configured");
+    }
+
+    public com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator getFaithfulnessEvaluator() {
+        return faithfulnessEvaluator;
     }
 }

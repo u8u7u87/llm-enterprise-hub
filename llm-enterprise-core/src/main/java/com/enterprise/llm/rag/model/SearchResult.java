@@ -16,6 +16,14 @@ public record SearchResult(
         this(id, "default", docName, chunkIndex, text, score, Collections.emptyMap());
     }
 
+    public SearchResult(String id, String text, double score) {
+        this(id, "default", "doc", 0, text, score, Collections.emptyMap());
+    }
+
+    public String content() {
+        return text != null ? text : "";
+    }
+
     public SearchResult withScore(double newScore) {
         return new SearchResult(id, tenantId, docName, chunkIndex, text, newScore, metadata != null ? metadata : Collections.emptyMap());
     }

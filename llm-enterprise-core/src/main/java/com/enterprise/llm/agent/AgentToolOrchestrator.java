@@ -184,6 +184,10 @@ public class AgentToolOrchestrator {
         return runLoop(llmClient, initialRequest, tenantId, DEFAULT_MAX_ITERATIONS);
     }
 
+    public ChatMessage executeToolCall(ToolCall tc, String tenantId) {
+        return executeSingleToolCall(tc, tenantId);
+    }
+
     private ChatMessage executeSingleToolCall(ToolCall tc, String tenantId) {
         String callId = tc.id() != null ? tc.id() : ("call_" + System.currentTimeMillis());
         String toolName = (tc.function() != null && tc.function().name() != null) ? tc.function().name() : "";

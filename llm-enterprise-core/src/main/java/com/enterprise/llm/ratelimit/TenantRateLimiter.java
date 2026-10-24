@@ -10,28 +10,66 @@ import java.util.concurrent.atomic.AtomicLong;
 public class TenantRateLimiter {
 
     private final ConcurrentHashMap<String, TokenBucket> buckets = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, SlidingWindowRateLimiter> slidingLimiters = new ConcurrentHashMap<>();
 
-    public boolean tryAcquire(TenantEntity tenant) {
+    public RateLimitResult tryAcquireDetailed(TenantEntity tenant, int estimatedTokens) {
         if (tenant == null) {
-            return false;
+            return RateLimitResult.rejected("TENANT_NULL", 0);
         }
 
         // 1. Check daily token quota
         if (tenant.getDailyTokenQuota() > 0 && tenant.getUsedTokens() >= tenant.getDailyTokenQuota()) {
-            return false;
+            return RateLimitResult.rejected("DAILY_TOKEN_QUOTA_EXCEEDED", 60000);
         }
 
         // 2. Check QPS TokenBucket
-        TokenBucket bucket = buckets.computeIfAbsent(
-                tenant.getId(),
-                id -> new TokenBucket(tenant.getQpsLimit(), tenant.getQpsLimit())
-        );
+        if (tenant.getQpsLimit() > 0) {
+            TokenBucket bucket = buckets.computeIfAbsent(
+                    tenant.getId(),
+                    id -> new TokenBucket(tenant.getQpsLimit(), tenant.getQpsLimit())
+            );
+            if (!bucket.tryConsume()) {
+                return RateLimitResult.rejected("QPS_EXCEEDED", 500);
+            }
+        }
 
-        return bucket.tryConsume();
+        // 3. Check Sliding Window (RPM + TPM)
+        if (tenant.getRpmLimit() > 0 || tenant.getTpmLimit() > 0) {
+            SlidingWindowRateLimiter slidingLimiter = slidingLimiters.computeIfAbsent(
+                    tenant.getId(),
+                    id -> new SlidingWindowRateLimiter()
+            );
+            RateLimitResult result = slidingLimiter.tryAcquire(tenant.getRpmLimit(), tenant.getTpmLimit(), estimatedTokens);
+            if (!result.allowed()) {
+                return result;
+            }
+        }
+
+        return RateLimitResult.granted();
+    }
+
+    public boolean tryAcquire(TenantEntity tenant, int estimatedTokens) {
+        return tryAcquireDetailed(tenant, estimatedTokens).allowed();
+    }
+
+    public boolean tryAcquire(TenantEntity tenant) {
+        return tryAcquire(tenant, 0);
+    }
+
+    public void recordUsage(TenantEntity tenant, long actualTokens, long estimatedTokens) {
+        if (tenant == null) {
+            return;
+        }
+        tenant.setUsedTokens(tenant.getUsedTokens() + actualTokens);
+        SlidingWindowRateLimiter slidingLimiter = slidingLimiters.get(tenant.getId());
+        if (slidingLimiter != null) {
+            slidingLimiter.recordUsage(actualTokens, estimatedTokens);
+        }
     }
 
     public void clear() {
         buckets.clear();
+        slidingLimiters.clear();
     }
 
     private static class TokenBucket {

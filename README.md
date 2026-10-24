@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-163%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-178%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -33,6 +33,10 @@
   - [15. Prometheus / Micrometer 企业级度量体系与端点暴露](#15-prometheus--micrometer-企业级度量体系与端点暴露)
   - [16. 高并发压测基准套件与 SQLite WAL 调优](#16-高并发压测基准套件与-sqlite-wal-调优)
   - [17. 多 Agent 协同工作流引擎 (Multi-Agent Swarm / Handoff)](#17-多-agent-协同工作流引擎-multi-agent-swarm--handoff)
+  - [18. 双轨滑动窗口限流器 (Dual Sliding-Window: RPM + TPM)](#18-双轨滑动窗口限流器-dual-sliding-window-rpm--tpm)
+  - [19. 自愈型三态熔断器 (Stateful Circuit Breaker: CLOSED / OPEN / HALF_OPEN)](#19-自愈型三态熔断器-stateful-circuit-breaker-closed--open--half_open)
+  - [20. 双向隐私脱敏保险库与透明反脱敏 (Privacy Vault & De-masking Transformer)](#20-双向隐私脱敏保险库与透明反脱敏-privacy-vault--de-masking-transformer)
+  - [21. 低延时投机对冲竞速路由 (Request Hedging / Speculative Racing)](#21-低延时投机对冲竞速路由-request-hedging--speculative-racing)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -356,6 +360,53 @@ public class OrderService {
 
 ---
 
+### 18. 双轨滑动窗口限流器 (Dual Sliding-Window: RPM + TPM)
+
+对齐工业级大模型网关（如 LiteLLM / Portkey）生产实践，不仅按 QPS 粗粒度防护，还引入分时精细化 **RPM (Requests Per Minute)** 与 **TPM (Tokens Per Minute)** 双轨滑动窗口限流：
+- **60 槽环形时间窗口 (`SlidingWindowRateLimiter`)**：
+  在租户内存中维护以秒为粒度的环形原子计数器，零全局锁计算当前整分钟内的请求次数与累加 Token 消耗，精确平滑流量突刺，消除固定窗口边界双倍流量攻击风险；
+- **周界与推理中两阶段闭环治理**：
+  - **网关周界鉴权 (`ApiKeyAuthenticationFilter`)**：预先校验租户 QPS 与 RPM 水位，若超限立即响应 `429 Too Many Requests` 并携带包含 `Retry-After: 60` 与触发类型 (`RPM limit exceeded`) 的标准响应体；
+  - **推理前 Token 预占与推理后实际用量精准校准 (`ChatCompletionController`)**：
+    在请求到达控制器后，利用 `TokenEstimator` 预估 Prompt Token，提前检查并扣减 TPM 限流配额；当上游大模型推理完成（包含流式结束或非流式返回）后，提取实际消耗的 `total_tokens`，调用 `recordUsage` 按差额自动校准滑动窗口计数器，确保计费与限流 100% 贴合实际负载。
+
+---
+
+### 19. 自愈型三态熔断器 (Stateful Circuit Breaker: CLOSED / OPEN / HALF_OPEN)
+
+在多模型容灾分发中彻底重构原有的单向永久熔断缺陷，实现符合高可用 SLA 标准的三态自愈熔断器：
+- **标准三态流转模型 (`CircuitBreaker`)**：
+  - `CLOSED`（闭合健康）：所有请求直达主模型；当连续错误次数达到阈值（默认 3 次）时瞬时熔断切换至 `OPEN`；
+  - `OPEN`（熔断开启）：所有流量立即短路降级至备用模型（如本地 Ollama 或备用厂商云端模型）；在冷却窗口（默认 10 秒）期内拒绝向上游不可用集群发包；
+  - `HALF_OPEN`（半开自愈试探）：冷却时间过后自动进入半开状态，严格控制单并发自愈探针流量进入主模型，若探针请求成功且满足最小恢复阈值，立即平滑恢复至 `CLOSED` 并清零故障计数；若试探失败则重置回 `OPEN` 重新进入冷却周期；
+- **自愈探针并发安全保护**：
+  引入 `halfOpenActivePermits` 限制最多 1 个探针并发通过，避免主模型集群初次恢复重启时被海量突发并发二次击穿。
+
+---
+
+### 20. 双向隐私脱敏保险库与透明反脱敏 (Privacy Vault & De-masking Transformer)
+
+针对大模型出海或第三方公共云 API 调用的数据合规风险（如 GDPR / PIPL），系统提供开箱即用的双向隐私脱敏体系：
+- **入站提示词自动伪匿名化 (`PrivacyMaskingService`)**：
+  在请求离开企业内网前，自动识别并拦截用户输入中的敏感命名实体（如手机号码、电子邮箱、居民身份证等），将其替换为确定性占位符（如 `<PHONE_1>`, `<EMAIL_1>`），并生成单次推理生命周期内唯一的映射保险库 (`PrivacyVault`)；
+- **出站响应透明反脱敏还原 (`PrivacyDeMaskingTransformer`)**：
+  - **非流式透明还原**：在响应返回客户端前自动基于保险库将模型吐出的占位符逆向置换为真实敏感数据，客户端与最终用户完全无感；
+  - **SSE 打字机流式跨 Chunk 缓冲还原**：
+    针对 LLM 打字机流式输出时占位符极易被切碎（如 `<PHONE_1>` 被拆分为 `"<PH"` 和 `"ONE_1>"` 跨 chunk 到达）的物理特征，内置轻量级滑动窗口缓冲机制（最大 32 字符），确保跨包流式占位符 100% 完整解析还原，且无内存泄漏风险。
+
+---
+
+### 21. 低延时投机对冲竞速路由 (Request Hedging / Speculative Racing)
+
+针对线上偶发网络抖动或主模型实例 Cold Start / 长尾延迟（P99 恶化）痛点，落地 **首字投机对冲竞速路由 (`RequestHedgingRouter`)**：
+- **首字耗时 (TTFT) 投机竞速**：
+  客户端发起请求时优先调度主模型（Primary）；同时在 Java 21 虚拟线程与后台调度器中注册 Hedging 延迟任务（默认 1500ms 阈值）；
+- **延迟对冲双向竞争**：
+  - 若主模型在 1500ms 内成功返回首字（或完整响应），立即取消对冲任务，实现零多余负载；
+  - 若主模型由于网络拥堵或排队超出阈值仍未吐字，对冲任务立即并发激活备用模型（Fallback），两者以首字到达时间竞速，最快产出有效数据的信道将即时呈现给用户，大幅压降企业级大模型应用的 P99 交互延迟。
+
+---
+
 ## 🔌 全量 RESTful API 规范与示例
 
 所有业务接口均需通过 HTTP Header 提供租户 API Key（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`），管理员接口需提供 `X-Admin-Key: <admin_key>`。
@@ -675,7 +726,11 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 - Java 21 虚拟线程 Tool 并发执行性能与租户 Scope 权限隔离 (`ToolConcurrencyAndScopingTest`)；
 - Prometheus / Micrometer 指标导出、TTFT、TPS、Token 消耗端到端验证 (`MicrometerLlmMetricsCollectorTest`, `PrometheusActuatorEndpointTest`)；
 - 高并发 SQLite WAL 模式读写分离与虚拟线程加速比性能基准 (`ConcurrencyBenchmarkSuiteTest`)；
-- 多 Agent 协同工作流引擎与智能客服工单分诊实战 (`AgentSwarmOrchestratorTest`, `CustomerSupportSwarmTest`)。
+- 多 Agent 协同工作流引擎与智能客服工单分诊实战 (`AgentSwarmOrchestratorTest`, `CustomerSupportSwarmTest`)；
+- 自愈型三态熔断器状态流转与单探针并发自愈保护 (`CircuitBreakerTest`, `FailoverRoutingServiceTest`)；
+- 租户 RPM / TPM 双轨滑动窗口平滑限流与 Prompt 预占及差额校准 (`SlidingWindowRateLimiterTest`, `TenantRateLimiterTest`, `ChatCompletionControllerTest`)；
+- 敏感实体伪匿名化双向脱敏与 SSE 流式跨 Chunk 缓冲区透明还原 (`PrivacyVaultTest`)；
+- TTFT 首字超时投机对冲竞速与低延迟长尾压降 (`RequestHedgingRouterTest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -687,12 +742,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 [INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
 [INFO] 
 [INFO] llm-enterprise-hub ................................. SUCCESS
-[INFO] llm-enterprise-core ................................ SUCCESS (94 tests)
+[INFO] llm-enterprise-core ................................ SUCCESS (107 tests)
 [INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (3 tests)
-[INFO] llm-enterprise-gateway-server ...................... SUCCESS (60 tests)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (62 tests)
 [INFO] sample-business-app ................................ SUCCESS (6 tests)
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 54.603 s
+[INFO] Total time: 58.120 s
 ```
-**全量 163 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 178 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

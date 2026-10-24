@@ -74,9 +74,18 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (!rateLimiter.tryAcquire(tenant)) {
-            sendJsonError(response, 429, "Rate limit or daily token quota exceeded");
-            return;
+        com.enterprise.llm.ratelimit.RateLimitResult rateResult = rateLimiter.tryAcquireDetailed(tenant, 0);
+        if (rateResult != null) {
+            if (!rateResult.allowed()) {
+                response.setHeader("Retry-After", String.valueOf(Math.max(1, rateResult.retryAfterMs() / 1000)));
+                sendJsonError(response, 429, "Rate limit or daily token quota exceeded: " + rateResult.rejectionReason());
+                return;
+            }
+        } else {
+            if (!rateLimiter.tryAcquire(tenant)) {
+                sendJsonError(response, 429, "Rate limit or daily token quota exceeded");
+                return;
+            }
         }
 
         try {

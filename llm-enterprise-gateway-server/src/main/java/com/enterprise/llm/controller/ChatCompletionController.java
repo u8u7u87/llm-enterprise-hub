@@ -40,6 +40,7 @@ public class ChatCompletionController {
     private final com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
     private final com.enterprise.llm.rag.RagPipelineService ragPipelineService;
     private final com.enterprise.llm.trace.TraceCollector traceCollector;
+    private final com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
 
     @Autowired
     public ChatCompletionController(
@@ -51,7 +52,8 @@ public class ChatCompletionController {
             CacheEngine cacheEngine,
             @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService,
             @Autowired(required = false) com.enterprise.llm.rag.RagPipelineService ragPipelineService,
-            @Autowired(required = false) com.enterprise.llm.trace.TraceCollector traceCollector
+            @Autowired(required = false) com.enterprise.llm.trace.TraceCollector traceCollector,
+            @Autowired(required = false) com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter
     ) {
         this.chatExecutionService = chatExecutionService;
         this.promptGuardrailService = promptGuardrailService;
@@ -62,6 +64,7 @@ public class ChatCompletionController {
         this.metricsRecordService = metricsRecordService;
         this.ragPipelineService = ragPipelineService;
         this.traceCollector = traceCollector;
+        this.tenantRateLimiter = tenantRateLimiter;
     }
 
     public ChatCompletionController(
@@ -73,7 +76,7 @@ public class ChatCompletionController {
             CacheEngine cacheEngine,
             com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
     ) {
-        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, metricsRecordService, null, null);
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, metricsRecordService, null, null, null);
     }
 
     public ChatCompletionController(
@@ -84,14 +87,14 @@ public class ChatCompletionController {
             TenantQuotaService tenantQuotaService,
             CacheEngine cacheEngine
     ) {
-        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null, null, null);
+        this(chatExecutionService, promptGuardrailService, outputGuardrailService, tokenEstimator, tenantQuotaService, cacheEngine, null, null, null, null);
     }
 
     public ChatCompletionController(
             ChatExecutionService chatExecutionService,
             PromptGuardrailService promptGuardrailService
     ) {
-        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null, null, null);
+        this(chatExecutionService, promptGuardrailService, new OutputGuardrailService(), new TokenEstimator(), null, null, null, null, null, null);
     }
 
     @PostMapping("/completions")
@@ -163,27 +166,51 @@ public class ChatCompletionController {
             }
         }
 
-        // 4. Pre-flight Token Quota Reservation (Accurately covers augmented RAG tokens)
+        // 4. Pre-flight Token Quota Reservation & TPM Rate Limit Check
         QuotaReservation reservation = null;
-        if (tenant != null && tenantQuotaService != null) {
-            int estimated = tokenEstimator.estimateTotalReservationTokens(effectiveRequest.messages(), effectiveRequest.maxTokens());
-            try {
-                reservation = tenantQuotaService.tryReserve(tenant.getId(), estimated);
-            } catch (QuotaExceededException e) {
-                if (metricsRecordService != null) {
-                    metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
+        int estimatedTokens = 0;
+        if (tenant != null) {
+            estimatedTokens = tokenEstimator.estimateTotalReservationTokens(effectiveRequest.messages(), effectiveRequest.maxTokens());
+            if (tenantRateLimiter != null) {
+                com.enterprise.llm.ratelimit.RateLimitResult tpmCheck = tenantRateLimiter.tryAcquireTpm(tenant, estimatedTokens);
+                if (tpmCheck != null && !tpmCheck.allowed()) {
+                    if (metricsRecordService != null) {
+                        metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
+                    }
+                    com.enterprise.llm.trace.TraceContext traceCtx = com.enterprise.llm.trace.TraceContext.getCurrent();
+                    com.enterprise.llm.trace.LlmSpan span = new com.enterprise.llm.trace.LlmSpan("chat_completion_tpm_exceeded", traceCtx, effectiveRequest.model());
+                    span.start(startMs);
+                    span.finish(System.currentTimeMillis(), 0, 0);
+                    if (traceCollector != null) {
+                        traceCollector.collect(span);
+                    }
+                    com.enterprise.llm.trace.RequestAuditLogger.logAudit(span, 429, "Rate limit or daily token quota exceeded: " + tpmCheck.rejectionReason());
+                    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .header("Retry-After", String.valueOf(Math.max(1, tpmCheck.retryAfterMs() / 1000)))
+                            .body(Map.of("status", 429, "error", "Rate limit or daily token quota exceeded: " + tpmCheck.rejectionReason()));
                 }
-                com.enterprise.llm.trace.TraceContext traceCtx = com.enterprise.llm.trace.TraceContext.getCurrent();
-                com.enterprise.llm.trace.LlmSpan span = new com.enterprise.llm.trace.LlmSpan("chat_completion_quota_exceeded", traceCtx, effectiveRequest.model());
-                span.start(startMs);
-                span.finish(System.currentTimeMillis(), 0, 0);
-                if (traceCollector != null) {
-                    traceCollector.collect(span);
+            }
+
+            if (tenantQuotaService != null) {
+                try {
+                    reservation = tenantQuotaService.tryReserve(tenant.getId(), estimatedTokens);
+                } catch (QuotaExceededException e) {
+                    if (metricsRecordService != null) {
+                        metricsRecordService.record(false, System.currentTimeMillis() - startMs, 0, 0, false, false, true);
+                    }
+                    com.enterprise.llm.trace.TraceContext traceCtx = com.enterprise.llm.trace.TraceContext.getCurrent();
+                    com.enterprise.llm.trace.LlmSpan span = new com.enterprise.llm.trace.LlmSpan("chat_completion_quota_exceeded", traceCtx, effectiveRequest.model());
+                    span.start(startMs);
+                    span.finish(System.currentTimeMillis(), 0, 0);
+                    if (traceCollector != null) {
+                        traceCollector.collect(span);
+                    }
+                    com.enterprise.llm.trace.RequestAuditLogger.logAudit(span, 429, "Rate limit or daily token quota exceeded");
+                    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(Map.of("status", 429, "error", "Rate limit or daily token quota exceeded"));
                 }
-                com.enterprise.llm.trace.RequestAuditLogger.logAudit(span, 429, "Rate limit or daily token quota exceeded");
-                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(Map.of("status", 429, "error", "Rate limit or daily token quota exceeded"));
             }
         }
 
@@ -195,6 +222,9 @@ public class ChatCompletionController {
                 ChatCompletionResponse response = chatExecutionService.executeSync(effectiveRequest, reservation);
                 long latency = System.currentTimeMillis() - startMs;
                 int usedTokens = (response != null && response.usage() != null && response.usage().totalTokens() != null) ? response.usage().totalTokens() : 0;
+                if (tenant != null && tenantRateLimiter != null) {
+                    tenantRateLimiter.recordUsage(tenant, usedTokens, estimatedTokens);
+                }
                 if (metricsRecordService != null) {
                     metricsRecordService.record(true, latency, usedTokens, 0, false, false, false);
                 }

@@ -234,4 +234,31 @@ class ChatCompletionControllerTest {
                         }
                         """));
     }
+
+    @Test
+    void shouldRejectWhenTpmExceeded() throws Exception {
+        Mockito.when(tenantService.authenticateApiKey(any()))
+                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 500, 100000, 0, true)));
+        Mockito.when(tokenEstimator.estimateTotalReservationTokens(any(), any()))
+                .thenReturn(600);
+        Mockito.when(tenantRateLimiter.tryAcquireDetailed(any(), Mockito.eq(0)))
+                .thenReturn(com.enterprise.llm.ratelimit.RateLimitResult.granted());
+        Mockito.when(tenantRateLimiter.tryAcquireTpm(any(), Mockito.eq(600)))
+                .thenReturn(com.enterprise.llm.ratelimit.RateLimitResult.rejected("TPM_EXCEEDED: 1200/500", 2000L));
+        Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
+
+        String jsonRequest = """
+                {
+                  "model": "gpt-4o",
+                  "messages": [{"role": "user", "content": "A very large prompt exceeding token limit"}]
+                }
+                """;
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .header("X-API-Key", "k")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonRequest))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("TPM_EXCEEDED")));
+    }
 }

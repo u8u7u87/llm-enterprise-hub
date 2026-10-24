@@ -48,6 +48,20 @@ public class TenantRateLimiter {
         return RateLimitResult.granted();
     }
 
+    public RateLimitResult tryAcquireTpm(TenantEntity tenant, int estimatedTokens) {
+        if (tenant == null) {
+            return RateLimitResult.rejected("TENANT_NULL", 0);
+        }
+        if (tenant.getTpmLimit() > 0) {
+            SlidingWindowRateLimiter slidingLimiter = slidingLimiters.computeIfAbsent(
+                    tenant.getId(),
+                    id -> new SlidingWindowRateLimiter()
+            );
+            return slidingLimiter.tryAcquire(0, tenant.getTpmLimit(), estimatedTokens);
+        }
+        return RateLimitResult.granted();
+    }
+
     public boolean tryAcquire(TenantEntity tenant, int estimatedTokens) {
         return tryAcquireDetailed(tenant, estimatedTokens).allowed();
     }

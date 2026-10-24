@@ -35,6 +35,9 @@ public class FailoverRoutingService {
     @Autowired(required = false)
     private ContextManager contextManager;
 
+    @Autowired(required = false)
+    private com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager;
+
     @Value("${llm.resilience.max-rate-limit-retries:2}")
     private int maxRateLimitRetries = 2;
 
@@ -47,13 +50,25 @@ public class FailoverRoutingService {
             @Qualifier("fallbackLlmClient") LlmClient fallbackClient,
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
             @Autowired(required = false) ContextManager contextManager,
-            @Autowired(required = false) CircuitBreaker circuitBreaker
+            @Autowired(required = false) CircuitBreaker circuitBreaker,
+            @Autowired(required = false) com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager
     ) {
         this.primaryClient = primaryClient;
         this.fallbackClient = fallbackClient;
         this.fallbackModel = fallbackModel;
         this.contextManager = contextManager;
         this.circuitBreaker = circuitBreaker != null ? circuitBreaker : new CircuitBreaker("primary-llm");
+        this.remoteClusterManager = remoteClusterManager;
+    }
+
+    public FailoverRoutingService(
+            @Qualifier("primaryLlmClient") LlmClient primaryClient,
+            @Qualifier("fallbackLlmClient") LlmClient fallbackClient,
+            @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
+            @Autowired(required = false) ContextManager contextManager,
+            @Autowired(required = false) CircuitBreaker circuitBreaker
+    ) {
+        this(primaryClient, fallbackClient, fallbackModel, contextManager, circuitBreaker, null);
     }
 
     public FailoverRoutingService(
@@ -93,7 +108,43 @@ public class FailoverRoutingService {
         this.backoffBaseMs = backoffBaseMs;
     }
 
+    public com.enterprise.llm.cluster.RemoteClusterManager getRemoteClusterManager() {
+        return remoteClusterManager;
+    }
+
+    public void setRemoteClusterManager(com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager) {
+        this.remoteClusterManager = remoteClusterManager;
+    }
+
     public ChatCompletionResponse chatCompletionWithFailover(ChatCompletionRequest request) {
+        // 1. Try Remote Compute Cluster first if discovered and available
+        if (remoteClusterManager != null && remoteClusterManager.hasActiveNodes()) {
+            com.enterprise.llm.cluster.UpstreamNode node = remoteClusterManager.selectNode(request);
+            if (node != null) {
+                LlmClient nodeClient = remoteClusterManager.getClientForNode(node);
+                if (nodeClient != null) {
+                    node.incrementActiveRequests();
+                    try {
+                        ChatCompletionResponse response = nodeClient.chatCompletion(request);
+                        node.recordSuccess();
+                        return response;
+                    } catch (LlmContentFilterException | LlmAuthenticationException | LlmInvalidRequestException fatalEx) {
+                        log.warn("Non-retryable fatal LLM exception from remote cluster node [{}]: status={}, msg={}",
+                                node.getId(), fatalEx.getStatusCode(), fatalEx.getMessage());
+                        throw fatalEx;
+                    } catch (Exception ex) {
+                        node.recordFailure();
+                        log.warn("Remote cluster node [{}] failed, falling back to local fallback model {}: {}",
+                                node.getId(), fallbackModel, ex.getMessage());
+                        return executeFallbackSync(request);
+                    } finally {
+                        node.decrementActiveRequests();
+                    }
+                }
+            }
+        }
+
+        // 2. Default/Safety Net routing with CircuitBreaker and Retry
         if (isCircuitOpen()) {
             log.warn("Circuit Breaker OPEN: Bypassing primary and executing fallback directly");
             return executeFallbackSync(request);
@@ -156,6 +207,55 @@ public class FailoverRoutingService {
         final StreamCancellationHandle[] activeHandle = new StreamCancellationHandle[1];
         final AtomicBoolean firstChunkReceived = new AtomicBoolean(false);
 
+        // 1. Try Remote Compute Cluster stream first if discovered and available
+        if (remoteClusterManager != null && remoteClusterManager.hasActiveNodes()) {
+            com.enterprise.llm.cluster.UpstreamNode node = remoteClusterManager.selectNode(request);
+            if (node != null) {
+                LlmClient nodeClient = remoteClusterManager.getClientForNode(node);
+                if (nodeClient != null) {
+                    node.incrementActiveRequests();
+                    final StreamCancellationHandle[] remoteHandle = new StreamCancellationHandle[1];
+                    final AtomicBoolean remoteChunkReceived = new AtomicBoolean(false);
+                    remoteHandle[0] = nodeClient.streamChatCompletion(
+                            request,
+                            chunk -> {
+                                remoteChunkReceived.set(true);
+                                node.recordSuccess();
+                                onChunk.accept(chunk);
+                            },
+                            () -> {
+                                node.decrementActiveRequests();
+                                onComplete.run();
+                            },
+                            error -> {
+                                node.decrementActiveRequests();
+                                if (!remoteChunkReceived.get()) {
+                                    if (error instanceof LlmContentFilterException
+                                            || error instanceof LlmAuthenticationException
+                                            || error instanceof LlmInvalidRequestException) {
+                                        onError.accept(error);
+                                        return;
+                                    }
+                                    node.recordFailure();
+                                    log.warn("Remote cluster node [{}] stream failed before first chunk, falling back to local {}: {}",
+                                            node.getId(), fallbackModel, error.getMessage());
+                                    activeHandle[0] = executeFallbackStream(request, onChunk, onComplete, onError);
+                                } else {
+                                    onError.accept(error);
+                                }
+                            }
+                    );
+                    return new StreamCancellationHandle(() -> {
+                        node.decrementActiveRequests();
+                        if (remoteHandle[0] != null) {
+                            remoteHandle[0].cancel();
+                        }
+                    });
+                }
+            }
+        }
+
+        // 2. Default/Safety Net streaming with CircuitBreaker and Retry
         if (isCircuitOpen()) {
             log.warn("Circuit Breaker OPEN: Starting stream directly on fallback");
             return executeFallbackStream(request, onChunk, onComplete, onError);

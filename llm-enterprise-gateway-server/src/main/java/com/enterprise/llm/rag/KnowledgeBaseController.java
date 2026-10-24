@@ -60,11 +60,19 @@ public class KnowledgeBaseController {
             return ResponseEntity.badRequest().body(Map.of("error", "content must not be empty"));
         }
 
-        TextChunker chunker = (req.chunkSize() != null && req.chunkOverlap() != null)
-                ? new TextChunker(req.chunkSize(), req.chunkOverlap())
-                : this.textChunker;
+        List<DocumentChunk> rawChunks;
+        if (req.docName().endsWith(".md") || req.content().contains("# ") || req.content().contains("|---") || req.content().contains("| :---")) {
+            com.enterprise.llm.rag.chunk.MarkdownStructureChunker mdChunker = (req.chunkSize() != null && req.chunkOverlap() != null)
+                    ? new com.enterprise.llm.rag.chunk.MarkdownStructureChunker(req.chunkSize(), req.chunkOverlap())
+                    : new com.enterprise.llm.rag.chunk.MarkdownStructureChunker();
+            rawChunks = mdChunker.chunk(req.content(), tenantId, req.docName());
+        } else {
+            TextChunker chunker = (req.chunkSize() != null && req.chunkOverlap() != null)
+                    ? new TextChunker(req.chunkSize(), req.chunkOverlap())
+                    : this.textChunker;
+            rawChunks = chunker.chunk(req.content(), tenantId, req.docName());
+        }
 
-        List<DocumentChunk> rawChunks = chunker.chunk(req.content(), tenantId, req.docName());
         if (rawChunks.isEmpty()) {
             return ResponseEntity.ok(Map.of("message", "No chunks generated", "chunk_count", 0));
         }

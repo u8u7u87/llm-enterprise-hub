@@ -152,5 +152,63 @@ class FailoverRoutingServiceTest {
         assertThat(customBreaker.getState()).isEqualTo(com.enterprise.llm.resilience.CircuitBreakerState.CLOSED);
         assertThat(primaryServer.getRequestCount()).isEqualTo(3);
     }
+
+    @Test
+    void shouldRouteToRemoteClusterNodeWhenDiscoveredAndHealthy() throws IOException {
+        MockWebServer remoteNodeServer = new MockWebServer();
+        remoteNodeServer.start();
+        try {
+            remoteNodeServer.enqueue(new MockResponse()
+                    .setHeader("Content-Type", "application/json")
+                    .setBody("{\"choices\":[{\"message\":{\"content\":\"From Remote GPU Node\"}}]}"));
+
+            com.enterprise.llm.cluster.UpstreamNode remoteNode = 
+                    new com.enterprise.llm.cluster.UpstreamNode("vllm-node-1", remoteNodeServer.url("/v1").toString());
+            com.enterprise.llm.cluster.RemoteClusterManager clusterManager = new com.enterprise.llm.cluster.RemoteClusterManager();
+            clusterManager.registerNode(remoteNode);
+
+            routingService.setRemoteClusterManager(clusterManager);
+
+            ChatCompletionRequest req = new ChatCompletionRequest("qwen2.5:72b", List.of(), false, 0.7);
+            ChatCompletionResponse response = routingService.chatCompletionWithFailover(req);
+
+            assertThat(response.choices().get(0).message().content()).isEqualTo("From Remote GPU Node");
+            assertThat(remoteNodeServer.getRequestCount()).isEqualTo(1);
+            assertThat(primaryServer.getRequestCount()).isEqualTo(0);
+            assertThat(fallbackServer.getRequestCount()).isEqualTo(0);
+        } finally {
+            remoteNodeServer.shutdown();
+        }
+    }
+
+    @Test
+    void shouldFallbackToLocalWhenRemoteClusterNodeFails() throws IOException {
+        MockWebServer remoteNodeServer = new MockWebServer();
+        remoteNodeServer.start();
+        try {
+            // Remote node fails with 500
+            remoteNodeServer.enqueue(new MockResponse().setResponseCode(500));
+            // Local fallback succeeds
+            fallbackServer.enqueue(new MockResponse()
+                    .setHeader("Content-Type", "application/json")
+                    .setBody("{\"choices\":[{\"message\":{\"content\":\"From Local Fallback Net\"}}]}"));
+
+            com.enterprise.llm.cluster.UpstreamNode remoteNode = 
+                    new com.enterprise.llm.cluster.UpstreamNode("vllm-node-fail", remoteNodeServer.url("/v1").toString());
+            com.enterprise.llm.cluster.RemoteClusterManager clusterManager = new com.enterprise.llm.cluster.RemoteClusterManager();
+            clusterManager.registerNode(remoteNode);
+
+            routingService.setRemoteClusterManager(clusterManager);
+
+            ChatCompletionRequest req = new ChatCompletionRequest("qwen2.5:72b", List.of(), false, 0.7);
+            ChatCompletionResponse response = routingService.chatCompletionWithFailover(req);
+
+            assertThat(response.choices().get(0).message().content()).isEqualTo("From Local Fallback Net");
+            assertThat(remoteNodeServer.getRequestCount()).isEqualTo(1);
+            assertThat(fallbackServer.getRequestCount()).isEqualTo(1);
+        } finally {
+            remoteNodeServer.shutdown();
+        }
+    }
 }
 

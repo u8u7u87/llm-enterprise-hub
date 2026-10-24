@@ -90,14 +90,60 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.cluster.RemoteClusterManager.class)
+    public com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager(
+            @Value("${llm.cluster.enabled:false}") boolean clusterEnabled,
+            @Value("${llm.cluster.dns-discovery:}") String dnsDiscovery,
+            @Value("${llm.cluster.static-nodes:}") String staticNodes,
+            @Value("${llm.cluster.discovery-interval-seconds:15}") long discoveryInterval,
+            ObjectProvider<com.enterprise.llm.cluster.lb.ClusterLoadBalancer> lbProvider
+    ) {
+        if (!clusterEnabled && (dnsDiscovery == null || dnsDiscovery.isBlank()) && (staticNodes == null || staticNodes.isBlank())) {
+            return null;
+        }
+
+        com.enterprise.llm.cluster.lb.ClusterLoadBalancer lb = lbProvider.getIfAvailable(com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer::new);
+        com.enterprise.llm.cluster.RemoteClusterManager manager = new com.enterprise.llm.cluster.RemoteClusterManager(new java.util.ArrayList<>(), lb);
+
+        if (dnsDiscovery != null && !dnsDiscovery.isBlank()) {
+            manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.DnsClusterDiscoveryProvider());
+            manager.addDiscoveryTarget(dnsDiscovery);
+        }
+        if (staticNodes != null && !staticNodes.isBlank()) {
+            manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.StaticClusterDiscoveryProvider());
+            manager.addDiscoveryTarget(staticNodes);
+        }
+
+        // Always register ModelCatalogDiscoveryProvider for automatic introspection
+        manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.ModelCatalogDiscoveryProvider());
+
+        if (discoveryInterval > 0) {
+            manager.startScheduledDiscovery(discoveryInterval);
+        } else {
+            manager.refreshTopology();
+        }
+
+        return manager;
+    }
+
+    @Bean
     @ConditionalOnMissingBean(FailoverRoutingService.class)
     public FailoverRoutingService failoverRoutingService(
             @Qualifier("primaryLlmClient") LlmClient primaryClient,
             @Qualifier("fallbackLlmClient") LlmClient fallbackClient,
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
-            ObjectProvider<ContextManager> contextManagerProvider
+            ObjectProvider<ContextManager> contextManagerProvider,
+            ObjectProvider<com.enterprise.llm.resilience.CircuitBreaker> circuitBreakerProvider,
+            ObjectProvider<com.enterprise.llm.cluster.RemoteClusterManager> clusterManagerProvider
     ) {
-        return new FailoverRoutingService(primaryClient, fallbackClient, fallbackModel, contextManagerProvider.getIfAvailable());
+        return new FailoverRoutingService(
+                primaryClient,
+                fallbackClient,
+                fallbackModel,
+                contextManagerProvider.getIfAvailable(),
+                circuitBreakerProvider.getIfAvailable(),
+                clusterManagerProvider.getIfAvailable()
+        );
     }
 
     @Bean

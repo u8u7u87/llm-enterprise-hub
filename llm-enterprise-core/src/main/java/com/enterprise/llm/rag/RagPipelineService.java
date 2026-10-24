@@ -21,6 +21,8 @@ public class RagPipelineService {
     private final EmbeddingClient embeddingClient;
     private final VectorStore vectorStore;
     private final PromptAugmentor promptAugmentor;
+    private final com.enterprise.llm.rag.query.QueryRewriter queryRewriter;
+    private final com.enterprise.llm.rag.rerank.Reranker reranker;
     private final boolean ragEnabled;
     private final int topK;
     private final double minScore;
@@ -29,6 +31,8 @@ public class RagPipelineService {
     public RagPipelineService(
             @Autowired(required = false) EmbeddingClient embeddingClient,
             @Autowired(required = false) VectorStore vectorStore,
+            @Autowired(required = false) com.enterprise.llm.rag.query.QueryRewriter queryRewriter,
+            @Autowired(required = false) com.enterprise.llm.rag.rerank.Reranker reranker,
             @Value("${rag.enabled:true}") boolean ragEnabled,
             @Value("${rag.top-k:3}") int topK,
             @Value("${rag.min-score:0.5}") double minScore
@@ -36,9 +40,21 @@ public class RagPipelineService {
         this.embeddingClient = embeddingClient;
         this.vectorStore = vectorStore;
         this.promptAugmentor = new PromptAugmentor();
+        this.queryRewriter = queryRewriter != null ? queryRewriter : new com.enterprise.llm.rag.query.ContextualQueryRewriter();
+        this.reranker = reranker != null ? reranker : new com.enterprise.llm.rag.rerank.HybridSearchReranker();
         this.ragEnabled = ragEnabled;
         this.topK = topK;
         this.minScore = minScore;
+    }
+
+    public RagPipelineService(
+            EmbeddingClient embeddingClient,
+            VectorStore vectorStore,
+            boolean ragEnabled,
+            int topK,
+            double minScore
+    ) {
+        this(embeddingClient, vectorStore, null, null, ragEnabled, topK, minScore);
     }
 
     /**
@@ -65,23 +81,35 @@ public class RagPipelineService {
             }
         }
 
-        if (userQuery == null) {
-            return request;
-        }
+        // 1. Contextual Query Disambiguation (Resolves anaphora and missing subjects in multi-turn chats)
+        String effectiveSearchQuery = queryRewriter != null 
+                ? queryRewriter.rewriteQuery(request.messages(), userQuery) 
+                : userQuery;
 
         try {
-            float[] queryVector = embeddingClient.embed(userQuery);
+            float[] queryVector = embeddingClient.embed(effectiveSearchQuery);
             if (queryVector == null || queryVector.length == 0) {
                 return request;
             }
 
-            List<SearchResult> hits = vectorStore.search(tenantId, queryVector, topK, minScore);
-            if (hits.isEmpty()) {
-                log.debug("RAG search returned 0 hits for tenant {} query: '{}'", tenantId, userQuery);
+            // Retrieve candidate pool
+            List<SearchResult> candidateHits = vectorStore.search(tenantId, queryVector, topK, minScore);
+            if (candidateHits.isEmpty()) {
+                log.debug("RAG search returned 0 hits for tenant {} query: '{}'", tenantId, effectiveSearchQuery);
                 return request;
             }
 
-            log.info("RAG search retrieved {} chunks for tenant {} query: '{}'", hits.size(), tenantId, userQuery);
+            // 2. Post-retrieval Hybrid Re-ranking & threshold filtering
+            List<SearchResult> hits = reranker != null
+                    ? reranker.rerank(effectiveSearchQuery, candidateHits, topK, minScore)
+                    : candidateHits.stream().limit(topK).toList();
+
+            if (hits.isEmpty()) {
+                log.debug("Reranker filtered out all candidate hits below threshold {} for tenant {}", minScore, tenantId);
+                return request;
+            }
+
+            log.info("RAG search retrieved and reranked {} chunks for tenant {} query: '{}'", hits.size(), tenantId, effectiveSearchQuery);
             List<ChatMessage> augmentedMessages = promptAugmentor.augment(request.messages(), hits);
 
             return new ChatCompletionRequest(

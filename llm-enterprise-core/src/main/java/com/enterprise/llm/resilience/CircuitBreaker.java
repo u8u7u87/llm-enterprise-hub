@@ -51,6 +51,13 @@ public class CircuitBreaker {
     }
 
     /**
+     * Checks if the circuit breaker is currently in OPEN state.
+     */
+    public boolean isOpen() {
+        return getState() == CircuitBreakerState.OPEN;
+    }
+
+    /**
      * 尝试获取执行许可
      *
      * @return true 允许访问主服务；false 熔断拦截，应快速失败或走降级备用服务

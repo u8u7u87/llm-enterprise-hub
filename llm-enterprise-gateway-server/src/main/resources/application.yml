@@ -20,16 +20,24 @@ server:
   port: 8080                         # 服务监听端口
 
 # ------------------------------------------------------------------------------
-# 1. 大模型推理引擎配置 (Primary & Fallback)
+# 1. 大模型推理引擎配置 (Remote Inference Cluster Auto-Discovery & Local Fallback)
 # ------------------------------------------------------------------------------
 llm:
+  # 远程 GPU 推理集群自感知 (支持 K8s Headless DNS、端点模型自省或静态列表，可选)
+  cluster:
+    enabled: false                           # 集群自感知开关 (设为 true 时优先路由远程集群)
+    dns-discovery: ""                        # K8s Headless Service 域名 (例如 vllm-headless.inference.svc.cluster.local:8000)
+    static-nodes: ""                         # 静态节点列表 (逗号分隔，例如 http://10.0.1.11:8000/v1,http://10.0.1.12:8000/v1)
+    discovery-interval-seconds: 15           # 拓扑刷新与探活周期 (秒)
+
+  # 本地默认开发与终极灾备兜底模型 (Default & Safety Net)
   provider:
     base-url: "http://localhost:11434/v1"   # 主模型 API 端点 (OpenAI 兼容 / Ollama / 云端)
     api-key: "ollama"                       # 主模型 API Key
     model: "qwen2.5:0.5b"                   # 主模型名称
     timeout-seconds: 60                     # 请求超时时间（秒）
   fallback:
-    base-url: "http://localhost:11434/v1"   # 熔断降级模型 API 端点
+    base-url: "http://localhost:11434/v1"   # 熔断降级模型 API 端点 (本地 Ollama 兜底)
     api-key: "ollama"                       # 降级模型 API Key
     model: "qwen2.5:0.5b"                   # 降级模型名称
 

@@ -24,4 +24,18 @@ public interface TenantStorageProvider {
     void updateEnabled(String id, boolean enabled);
 
     void deleteAll();
+
+    /**
+     * Batch increment used tokens for multiple tenants in a single batch operation.
+     * Prevents database hot row contention in high-concurrency environments.
+     */
+    default void batchIncrementUsedTokens(java.util.Map<String, Long> tokenDeltas) {
+        if (tokenDeltas != null) {
+            tokenDeltas.forEach((id, delta) -> {
+                if (delta != null && delta > 0) {
+                    incrementUsedTokens(id, delta);
+                }
+            });
+        }
+    }
 }

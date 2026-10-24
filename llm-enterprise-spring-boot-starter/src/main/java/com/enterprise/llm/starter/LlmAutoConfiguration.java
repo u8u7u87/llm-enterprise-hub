@@ -26,7 +26,11 @@ import com.enterprise.llm.guard.prompt.PropertiesPromptRuleProvider;
 import com.enterprise.llm.guard.tool.PropertiesToolPolicyProvider;
 import com.enterprise.llm.guard.tool.ToolPolicyProperties;
 import com.enterprise.llm.guard.tool.ToolPolicyProvider;
+import com.enterprise.llm.quota.AsyncQuotaWriteBehindBatcher;
+import com.enterprise.llm.quota.InMemoryQuotaStorageEngine;
+import com.enterprise.llm.quota.QuotaStorageEngine;
 import com.enterprise.llm.quota.TenantQuotaService;
+import com.enterprise.llm.ratelimit.DistributedRateLimiter;
 import com.enterprise.llm.rag.PromptAugmentor;
 import com.enterprise.llm.rag.RagPipelineService;
 import com.enterprise.llm.rag.embedding.EmbeddingClient;
@@ -45,6 +49,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -179,9 +184,29 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(DistributedRateLimiter.class)
+    public DistributedRateLimiter distributedRateLimiter(TenantRateLimiter tenantRateLimiter) {
+        return new DistributedRateLimiter(tenantRateLimiter);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(QuotaStorageEngine.class)
+    public QuotaStorageEngine quotaStorageEngine() {
+        return new InMemoryQuotaStorageEngine();
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "llm.quota.write-behind", name = "enabled", havingValue = "true")
+    public AsyncQuotaWriteBehindBatcher asyncQuotaWriteBehindBatcher(TenantStorageProvider tenantStorageProvider) {
+        return new AsyncQuotaWriteBehindBatcher(tenantStorageProvider);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(TenantQuotaService.class)
-    public TenantQuotaService tenantQuotaService(TenantStorageProvider tenantStorageProvider) {
-        return new TenantQuotaService(tenantStorageProvider);
+    public TenantQuotaService tenantQuotaService(TenantStorageProvider tenantStorageProvider,
+                                                 QuotaStorageEngine quotaStorageEngine,
+                                                 ObjectProvider<AsyncQuotaWriteBehindBatcher> asyncQuotaWriteBehindBatcher) {
+        return new TenantQuotaService(tenantStorageProvider, quotaStorageEngine, asyncQuotaWriteBehindBatcher.getIfAvailable());
     }
 
     @Bean

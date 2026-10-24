@@ -75,6 +75,22 @@ public class TenantRepository implements TenantStorageProvider {
         jdbcTemplate.update(sql, tokens, id);
     }
 
+    @Override
+    public void batchIncrementUsedTokens(java.util.Map<String, Long> tokenDeltas) {
+        if (tokenDeltas == null || tokenDeltas.isEmpty()) {
+            return;
+        }
+        String sql = "UPDATE tenants SET used_tokens = used_tokens + ? WHERE id = ?";
+        java.util.List<Object[]> batchArgs = tokenDeltas.entrySet().stream()
+                .filter(e -> e.getKey() != null && e.getValue() != null && e.getValue() > 0)
+                .map(e -> new Object[]{e.getValue(), e.getKey()})
+                .toList();
+
+        if (!batchArgs.isEmpty()) {
+            jdbcTemplate.batchUpdate(sql, batchArgs);
+        }
+    }
+
     public java.util.List<TenantEntity> findAll() {
         return jdbcTemplate.query("SELECT * FROM tenants ORDER BY created_at DESC", rowMapper);
     }

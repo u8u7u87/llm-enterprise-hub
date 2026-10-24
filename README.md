@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-178%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-227%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -37,6 +37,8 @@
   - [19. 自愈型三态熔断器 (Stateful Circuit Breaker: CLOSED / OPEN / HALF_OPEN)](#19-自愈型三态熔断器-stateful-circuit-breaker-closed--open--half_open)
   - [20. 双向隐私脱敏保险库与透明反脱敏 (Privacy Vault & De-masking Transformer)](#20-双向隐私脱敏保险库与透明反脱敏-privacy-vault--de-masking-transformer)
   - [21. 低延时投机对冲竞速路由 (Request Hedging / Speculative Racing)](#21-低延时投机对冲竞速路由-request-hedging--speculative-racing)
+  - [22. 远程 GPU 推理集群拓扑自感知与显存感知负载均衡 (vLLM / Triton Cluster)](#22-远程-gpu-推理集群拓扑自感知与显存感知负载均衡-vllm--triton-cluster)
+  - [23. 进阶 RAG 知识增强架构 (多轮 Query 改写 + Markdown 结构分块 + 混合重排)](#23-进阶-rag-知识增强架构-多轮-query-改写--markdown-结构分块--混合重排)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
@@ -407,6 +409,33 @@ public class OrderService {
 
 ---
 
+### 22. 远程 GPU 推理集群拓扑自感知与显存感知负载均衡 (vLLM / Triton Cluster)
+
+系统作为企业级大模型 Harness（治理中枢），将重型计算剥离至远程 GPU 推理集群，实现分布式集群自感知与显存排队削峰：
+- **零配置集群动态自感知 (`ClusterDiscoveryProvider` SPI)**：
+  - **K8s Headless DNS 自感知 (`DnsClusterDiscoveryProvider`)**：对接 K8s Headless 域名（如 `vllm-service.inference.svc.cluster.local:8000`），定时解析 A 记录，Pod 动态扩容或漂移秒级自动加群与剔除，0 运维成本；
+  - **模型目录自省与热发现 (`ModelCatalogDiscoveryProvider`)**：周期性探测 `/v1/models` 端点，后端集群加载完成新模型或 LoRA 权重时自动接入路由表；
+  - **静态与开发兼容模式 (`StaticClusterDiscoveryProvider`)**：单机开发直接指定逗号分隔端点。
+- **大模型专用负载均衡器 (`ClusterLoadBalancer`)**：
+  - **最小在途请求调度 (`LeastRequestsLoadBalancer`)**：实时统计每个 Worker 的并发连接数 `activeRequests`，智能绕过显存积压的实例，防止 TTFT 剧烈恶化；
+  - **前缀缓存一致性哈希 (`PrefixHashLoadBalancer`)**：基于 System Prompt 与上下文做一致性哈希，最大化命中 vLLM Automatic Prefix Caching (APC)，降低显存算力开销；
+- **本地默认与终极兜底安全网**：
+  若远程集群因网络分区或全量故障不可达，系统自动无缝平滑回退至本地 Ollama 或默认模型，保障业务系统 0 停机。
+
+---
+
+### 23. 进阶 RAG 知识增强架构 (多轮 Query 改写 + Markdown 结构分块 + 混合重排)
+
+对齐业界工业级 RAG 最佳实践，解决朴素 RAG 在多轮追问缺失主语、表格断裂和粗排噪音的痛点：
+- **多轮对话指代消解与 Query 改写 (`ContextualQueryRewriter`)**：
+  自动分析多轮对话历史，识别用户后续追问中的代词（“它”、“这个”、“如何申请”），提取前序轮次中的实体主题（如《企业年金管理规定》、商业补充医疗），就地合成自包含检索语句，彻底解决多轮追问向量检索召回率为 0 的严重缺陷；
+- **Markdown 结构与表格感知分块 (`MarkdownStructureChunker`)**：
+  自动追踪 Markdown 标题层级（H1/H2/H3），生成面包屑上下文路径（`[章节: 企业制度 > 员工福利 > 报销标准]`）作为前缀；完整保护 Markdown 表格和代码块不被截断，彻底消除表头丢失导致的数据幻觉；
+- **混合重排与精准实体提权 (`HybridSearchReranker`)**：
+  融合 Dense 向量余弦相似度与 Sparse 词频匹配（支持中文 Bi-Gram N-gram 分词）；对专有名词、错误码（如 `ERR-50201`）与工单编号实施精准匹配加权，并在后检索阶段硬过滤低置信度噪点切片，避免上下文污染。
+
+---
+
 ## 🔌 全量 RESTful API 规范与示例
 
 所有业务接口均需通过 HTTP Header 提供租户 API Key（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`），管理员接口需提供 `X-Admin-Key: <admin_key>`。
@@ -730,7 +759,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 - 自愈型三态熔断器状态流转与单探针并发自愈保护 (`CircuitBreakerTest`, `FailoverRoutingServiceTest`)；
 - 租户 RPM / TPM 双轨滑动窗口平滑限流与 Prompt 预占及差额校准 (`SlidingWindowRateLimiterTest`, `TenantRateLimiterTest`, `ChatCompletionControllerTest`)；
 - 敏感实体伪匿名化双向脱敏与 SSE 流式跨 Chunk 缓冲区透明还原 (`PrivacyVaultTest`)；
-- TTFT 首字超时投机对冲竞速与低延迟长尾压降 (`RequestHedgingRouterTest`)。
+- TTFT 首字超时投机对冲竞速与低延迟长尾压降 (`RequestHedgingRouterTest`)；
+- 远程 GPU 推理集群 K8s Headless DNS 自感知、模型自省与节点动态扩缩容 (`ClusterDiscoveryTest`, `RemoteClusterManagerTest`)；
+- 显存最小在途请求与前缀缓存一致性哈希负载均衡算法 (`ClusterLoadBalancerTest`, `RemoteClusterDiscoveryIntegrationTest`)；
+- 多轮对话指代消解与 Query 改写 (`ContextualQueryRewriterTest`)；
+- Markdown 章节面包屑层级结构与表格/代码块感知切片 (`MarkdownStructureChunkerTest`)；
+- 混合重排评分融合与实体精准提权 (`HybridSearchRerankerTest`, `RagPipelineServiceTest`)。
 
 执行全量自动化验证指令：
 ```bash
@@ -742,12 +776,12 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 [INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
 [INFO] 
 [INFO] llm-enterprise-hub ................................. SUCCESS
-[INFO] llm-enterprise-core ................................ SUCCESS (107 tests)
+[INFO] llm-enterprise-core ................................ SUCCESS (155 tests)
 [INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (3 tests)
-[INFO] llm-enterprise-gateway-server ...................... SUCCESS (62 tests)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (63 tests)
 [INFO] sample-business-app ................................ SUCCESS (6 tests)
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 58.120 s
+[INFO] Total time: 01:01 min
 ```
-**全量 178 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 227 个用例全部绿色通过，0 失败、0 错误、0 跳过**。

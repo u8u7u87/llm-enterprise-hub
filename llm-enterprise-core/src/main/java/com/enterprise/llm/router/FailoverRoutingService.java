@@ -11,6 +11,7 @@ import com.enterprise.llm.exception.LlmRateLimitException;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.resilience.CircuitBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,7 +20,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 @Service
@@ -30,6 +30,7 @@ public class FailoverRoutingService {
     private final LlmClient primaryClient;
     private final LlmClient fallbackClient;
     private final String fallbackModel;
+    private final CircuitBreaker circuitBreaker;
 
     @Autowired(required = false)
     private ContextManager contextManager;
@@ -40,20 +41,28 @@ public class FailoverRoutingService {
     @Value("${llm.resilience.backoff-base-ms:100}")
     private long backoffBaseMs = 100L;
 
-    private final AtomicInteger failureCount = new AtomicInteger(0);
-    private final int circuitBreakerThreshold = 3;
-
     @Autowired
     public FailoverRoutingService(
             @Qualifier("primaryLlmClient") LlmClient primaryClient,
             @Qualifier("fallbackLlmClient") LlmClient fallbackClient,
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
-            @Autowired(required = false) ContextManager contextManager
+            @Autowired(required = false) ContextManager contextManager,
+            @Autowired(required = false) CircuitBreaker circuitBreaker
     ) {
         this.primaryClient = primaryClient;
         this.fallbackClient = fallbackClient;
         this.fallbackModel = fallbackModel;
         this.contextManager = contextManager;
+        this.circuitBreaker = circuitBreaker != null ? circuitBreaker : new CircuitBreaker("primary-llm");
+    }
+
+    public FailoverRoutingService(
+            LlmClient primaryClient,
+            LlmClient fallbackClient,
+            String fallbackModel,
+            ContextManager contextManager
+    ) {
+        this(primaryClient, fallbackClient, fallbackModel, contextManager, null);
     }
 
     public FailoverRoutingService(
@@ -61,7 +70,7 @@ public class FailoverRoutingService {
             LlmClient fallbackClient,
             String fallbackModel
     ) {
-        this(primaryClient, fallbackClient, fallbackModel, null);
+        this(primaryClient, fallbackClient, fallbackModel, null, null);
     }
 
     public LlmClient getPrimaryClient() {
@@ -245,15 +254,19 @@ public class FailoverRoutingService {
         return fallbackClient.streamChatCompletion(fallbackRequest, onChunk, onComplete, onError);
     }
 
+    public CircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
     private boolean isCircuitOpen() {
-        return failureCount.get() >= circuitBreakerThreshold;
+        return !circuitBreaker.tryAcquirePermission();
     }
 
     private void recordSuccess() {
-        failureCount.set(0);
+        circuitBreaker.recordSuccess();
     }
 
     private void recordFailure() {
-        failureCount.incrementAndGet();
+        circuitBreaker.recordFailure();
     }
 }

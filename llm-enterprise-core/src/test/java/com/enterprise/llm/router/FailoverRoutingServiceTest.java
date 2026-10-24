@@ -108,4 +108,49 @@ class FailoverRoutingServiceTest {
         assertThat(chunks).hasSize(1);
         assertThat(chunks.get(0).choices().get(0).delta().content()).isEqualTo("Fallback stream");
     }
+
+    @Test
+    void shouldSelfHealWhenPrimaryRecoversAfterCooldown() throws Exception {
+        com.enterprise.llm.resilience.CircuitBreakerConfig fastConfig = 
+                new com.enterprise.llm.resilience.CircuitBreakerConfig(2, 100L, 1, 1);
+        com.enterprise.llm.resilience.CircuitBreaker customBreaker = 
+                new com.enterprise.llm.resilience.CircuitBreaker("test-primary", fastConfig);
+        routingService = new FailoverRoutingService(primaryClient, fallbackClient, "qwen2.5:0.5b", null, customBreaker);
+
+        // Fail 1
+        primaryServer.enqueue(new MockResponse().setResponseCode(500));
+        fallbackServer.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"Fallback 1\"}}]}"));
+        ChatCompletionRequest req = new ChatCompletionRequest("cloud-model", List.of(), false, 0.7);
+        routingService.chatCompletionWithFailover(req);
+
+        // Fail 2 -> Trips breaker to OPEN
+        primaryServer.enqueue(new MockResponse().setResponseCode(500));
+        fallbackServer.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"Fallback 2\"}}]}"));
+        routingService.chatCompletionWithFailover(req);
+
+        assertThat(customBreaker.getState()).isEqualTo(com.enterprise.llm.resilience.CircuitBreakerState.OPEN);
+
+        // Immediate next call should bypass primary completely
+        fallbackServer.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"Fallback 3 Bypassed\"}}]}"));
+        ChatCompletionResponse resp3 = routingService.chatCompletionWithFailover(req);
+        assertThat(resp3.choices().get(0).message().content()).isEqualTo("Fallback 3 Bypassed");
+        assertThat(primaryServer.getRequestCount()).isEqualTo(2); // No new request to primary
+
+        // Wait for cooldown
+        Thread.sleep(120);
+
+        // Primary is now healthy!
+        primaryServer.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"Primary Healed!\"}}]}"));
+        ChatCompletionResponse healResp = routingService.chatCompletionWithFailover(req);
+
+        // Must succeed from Primary and self-heal
+        assertThat(healResp.choices().get(0).message().content()).isEqualTo("Primary Healed!");
+        assertThat(customBreaker.getState()).isEqualTo(com.enterprise.llm.resilience.CircuitBreakerState.CLOSED);
+        assertThat(primaryServer.getRequestCount()).isEqualTo(3);
+    }
 }
+

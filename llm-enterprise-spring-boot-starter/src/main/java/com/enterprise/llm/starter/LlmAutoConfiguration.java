@@ -31,6 +31,10 @@ import com.enterprise.llm.quota.InMemoryQuotaStorageEngine;
 import com.enterprise.llm.quota.QuotaStorageEngine;
 import com.enterprise.llm.quota.TenantQuotaService;
 import com.enterprise.llm.ratelimit.DistributedRateLimiter;
+import com.enterprise.llm.resilience.AdaptiveJitteredRetryPolicy;
+import com.enterprise.llm.router.canary.CanaryRoutingService;
+import com.enterprise.llm.router.shadow.ShadowTrafficMirror;
+import com.enterprise.llm.template.PromptTemplateRegistry;
 import com.enterprise.llm.rag.PromptAugmentor;
 import com.enterprise.llm.rag.RagPipelineService;
 import com.enterprise.llm.rag.embedding.EmbeddingClient;
@@ -207,6 +211,30 @@ public class LlmAutoConfiguration {
                                                  QuotaStorageEngine quotaStorageEngine,
                                                  ObjectProvider<AsyncQuotaWriteBehindBatcher> asyncQuotaWriteBehindBatcher) {
         return new TenantQuotaService(tenantStorageProvider, quotaStorageEngine, asyncQuotaWriteBehindBatcher.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(CanaryRoutingService.class)
+    public CanaryRoutingService canaryRoutingService() {
+        return new CanaryRoutingService();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ShadowTrafficMirror.class)
+    public ShadowTrafficMirror shadowTrafficMirror() {
+        return new ShadowTrafficMirror();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(PromptTemplateRegistry.class)
+    public PromptTemplateRegistry promptTemplateRegistry() {
+        return new PromptTemplateRegistry();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(AdaptiveJitteredRetryPolicy.class)
+    public AdaptiveJitteredRetryPolicy adaptiveJitteredRetryPolicy() {
+        return new AdaptiveJitteredRetryPolicy();
     }
 
     @Bean

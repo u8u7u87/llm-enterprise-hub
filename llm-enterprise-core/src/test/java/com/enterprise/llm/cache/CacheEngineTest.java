@@ -136,4 +136,59 @@ class CacheEngineTest {
         Optional<ChatCompletionResponse> cached = shortCache.lookup(req);
         assertThat(cached).isEmpty();
     }
+
+    @Test
+    void shouldHitL2VectorSemanticCacheWithZeroLexicalOverlap() {
+        properties.setSemanticThreshold(0.85);
+        // Mock embedding client returning high cosine similarity for conceptually identical questions
+        com.enterprise.llm.rag.embedding.EmbeddingClient mockEmbedder = text -> {
+            if (text.contains("增值税发票")) {
+                return new float[]{1.0f, 0.0f, 0.0f};
+            } else if (text.contains("开专票")) {
+                return new float[]{0.96f, 0.05f, 0.0f};
+            } else {
+                return new float[]{0.0f, 1.0f, 0.0f}; // completely different
+            }
+        };
+
+        CacheEngine vectorCache = new CacheEngine(properties, mockEmbedder);
+
+        ChatCompletionRequest req1 = new ChatCompletionRequest(
+                "qwen2.5:0.5b",
+                List.of(new ChatMessage("user", "如何开具增值税发票？")),
+                false,
+                0.7
+        );
+        ChatCompletionResponse resp1 = new ChatCompletionResponse(
+                "c-vat-invoice", "chat.completion", 1000L, "qwen2.5:0.5b",
+                List.of(new ChatCompletionResponse.Choice(0, new ChatMessage("assistant", "前往财务系统提交发票抬头与税号申请开具。"), "stop")),
+                new Usage(10, 20, 30)
+        );
+
+        vectorCache.put(req1, resp1);
+
+        // Completely different words ("开专票"), zero Jaccard overlap, but high embedding cosine
+        ChatCompletionRequest req2 = new ChatCompletionRequest(
+                "qwen2.5:0.5b",
+                List.of(new ChatMessage("user", "我想开专票怎么操作？")),
+                false,
+                0.7
+        );
+
+        Optional<ChatCompletionResponse> cached = vectorCache.lookup(req2);
+        assertThat(cached).isPresent();
+        assertThat(cached.get().id()).isEqualTo("c-vat-invoice");
+        assertThat(vectorCache.getL2Hits()).isEqualTo(1);
+
+        // Unrelated query should miss
+        ChatCompletionRequest reqUnrelated = new ChatCompletionRequest(
+                "qwen2.5:0.5b",
+                List.of(new ChatMessage("user", "今天天气怎么样？")),
+                false,
+                0.7
+        );
+        Optional<ChatCompletionResponse> missed = vectorCache.lookup(reqUnrelated);
+        assertThat(missed).isEmpty();
+        assertThat(vectorCache.getMisses()).isEqualTo(1);
+    }
 }

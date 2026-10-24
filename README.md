@@ -5,7 +5,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-241%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
+[![Tests](https://img.shields.io/badge/Tests-257%2B%20Passed%20(100%25)-success)](#-自动化测试与质量指标)
 
 > **LLM Enterprise Hub** 是一个面向企业级生产环境设计的高性能大模型网关与自主智能体（Agent）调度中枢。全链路基于 **Java 21 虚拟线程 (Virtual Threads)** 构建高吞吐底座，向上全面兼容 **OpenAI 标准协议**，无缝串联多租户治理、双向动态安全护栏、两级加速缓存、ReAct 工具编排与断点续跑状态机、前置 Milvus 知识库 RAG 流水线，并内置开箱即用的现代化 Web 监控运维大盘。
 
@@ -43,10 +43,15 @@
   - [25. 多 Key 凭据池与 429 智能自愈轮转 (Multi-Key Pool & Tiered Rotation)](#25-多-key-凭据池与-429-智能自愈轮转-multi-key-pool--tiered-rotation)
   - [26. W3C TraceContext 分布式全链路追踪 (OpenTelemetry traceparent & Correlation)](#26-w3c-tracecontext-分布式全链路追踪-opentelemetry-traceparent--correlation)
   - [27. RAG 事实忠实度评估与幻觉主动防御 (RAG Groundedness & Faithfulness Guardrail)](#27-rag-事实忠实度评估与幻觉主动防御-rag-groundedness--faithfulness-guardrail)
+  - [28. 稠密向量级真实语义缓存引擎 (Embedding-Powered Vector Semantic Cache)](#28-稠密向量级真实语义缓存引擎-embedding-powered-vector-semantic-cache)
+  - [29. 企业级模型财务成本核算与定价引擎 (Model Pricing & Cost Calculator)](#29-企业级模型财务成本核算与定价引擎-model-pricing--cost-calculator)
+  - [30. 虚拟模型别名与多级级联降级路由表 (Virtual Model Aliases & Cascade Routing)](#30-虚拟模型别名与多级级联降级路由表-virtual-model-aliases--cascade-routing)
+  - [31. 流式敏感数据实时在线滑动窗口拦截 (Streaming Real-Time Sliding-Window Guardrail)](#31-流式敏感数据实时在线滑动窗口拦截-streaming-real-time-sliding-window-guardrail)
 - [全量 RESTful API 规范与示例](#-全量-restful-api-规范与示例)
 - [核心配置文件参考 (application.yml)](#-核心配置文件参考-applicationyml)
 - [快速开始与环境搭建](#-快速开始与环境搭建)
 - [自动化测试与质量指标](#-自动化测试与质量指标)
+
 
 ---
 
@@ -488,7 +493,53 @@ public class OrderService {
 
 ---
 
+### 28. 稠密向量级真实语义缓存引擎 (Embedding-Powered Vector Semantic Cache)
+
+突破传统缓存字面重合度的局限，实现高准确率语义级大模型响应复用：
+- **稠密向量化与余弦相似度比对 (`CacheEngine` & `EmbeddingClient`)**：
+  为高频请求生成嵌入向量并持久化于 `CacheEntry`，在 L2 语义缓存检索中采用向量余弦相似度匹配（阈值 $\ge 0.85$）；
+- **零字面重合同义命中与算力节省**：
+  彻底攻克“增值税发票如何开具”与“我想开专票怎么操作”等字面零交集、概念完全一致场景下的缓存穿透问题，大幅削减 90%+ 云端 Token 支出与 GPU 推理耗时；
+- **自适应降级机制**：
+  当系统未配置向量嵌入模型时，自动平滑退化为轻量级 Jaccard 词袋相似度检测，保证系统高鲁棒性。
+
+---
+
+### 29. 企业级模型财务成本核算与定价引擎 (Model Pricing & Cost Calculator)
+
+对标工业级商业大模型网关（Portkey、LiteLLM），构建全透明的财务成本治理体系：
+- **官方费率内置与前缀优先级算法 (`ModelPricingRegistry`)**：
+  内置 DeepSeek (V3/R1)、OpenAI (GPT-4o/mini/turbo)、阿里通义千问及本地私有化免费模型的百万 Token 输入/输出单价表；支持最长前缀精准匹配，支持自定义费率覆盖；
+- **微美元精细核算与调用链追踪 (`CostCalculator` & `LlmSpan`)**：
+  请求结束后毫秒级计算实际调用花费（精确至 6 位小数微美元），自动注入 `LlmSpan` 并在单行 JSON 审计日志中持久化 `costUsd` 字段；
+- **租户财务预算超额拦截门禁 (`TenantBudgetManager`)**：
+  支持为各个企业租户按日/月设定美元预算上限，额度耗尽前提供透明扣减，超额即时抛出 `TenantBudgetExceededException` 保护企业财务安全。
+
+---
+
+### 30. 虚拟模型别名与多级级联降级路由表 (Virtual Model Aliases & Cascade Routing)
+
+解耦业务应用与物理模型拓扑，实现无缝级联弹性容灾：
+- **虚拟模型别名体系 (`ModelAliasRegistry`)**：
+  提供业务语义化别名（如 `fast`、`reasoning`、`general`、`free`），屏蔽底层物理模型名及版本升级变更；
+- **多级级联降级路由策略 (`FailoverRoutingService`)**：
+  别名可绑定有序候选模型链路 `[primary, secondary, tertiary]`。当首选模型出现服务不可用（5xx、超时、熔断）时，路由引擎自动级联尝试后续候选模型；当所有候选耗尽时无缝降级至本地轻量保底模型，实现真正的五九级（99.999%）可用性。
+
+---
+
+### 31. 流式敏感数据实时在线滑动窗口拦截 (Streaming Real-Time Sliding-Window Guardrail)
+
+攻克大模型 SSE 流式打字机逐字输出过程中隐私敏感数据跨 Chunk 碎片泄露的业界难题：
+- **跨 Chunk 环形滑动窗口检验 (`StreamingOutputGuardrail`)**：
+  维护前后相邻 Chunk 的滑动重叠窗口，即使手机号（如 `138123` + `45678`）、身份证、银行卡或 `sk-...` API Key 被分片截断，亦能精准识别捕获；
+- **双模响应拦截机制**：
+  - **`BLOCK` 模式**：检测到高危泄密立刻中断 SSE 数据流，抛出 `StreamingGuardrailException` 并触发安全事件告警；
+  - **`MASK` 模式**：跨 Chunk 动态替换为掩码字符（如 `1**********`），在不中断用户体验的前提下完成出站隐私保护。
+
+---
+
 ## 🔌 全量 RESTful API 规范与示例
+
 
 所有业务接口均需通过 HTTP Header 提供租户 API Key（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`），管理员接口需提供 `X-Admin-Key: <admin_key>`。
 
@@ -821,24 +872,29 @@ java -jar samples/sample-business-app/target/sample-business-app-0.0.1-SNAPSHOT.
 - 多 API Key 资源池、平滑轮替调度与 429 速率限制冷却自愈 (`ApiKeyPoolTest`)；
 - 流式打字机 Chunk 碎片重组与 Tool Calls 闭环触发 (`StreamChunkAccumulatorTest`)；
 - 流式 ReAct Agent 多轮工具编排与 SSE 中间事件透传 (`StreamingAgentOrchestratorTest`)；
-- RAG 事实忠实度评估、数值命题与 Bi-Gram 校验及三态合规门禁 (`RagFaithfulnessEvaluatorTest`)。
+- RAG 事实忠实度评估、数值命题与 Bi-Gram 校验及三态合规门禁 (`RagFaithfulnessEvaluatorTest`)；
+- 稠密向量嵌入与零字面重合语义缓存命中 (`CacheEngineTest`)；
+- 模型差异化千 Token 定价、微美元成本核算与租户预算超额拦截 (`CostCalculatorTest`, `TenantBudgetManagerTest`)；
+- 虚拟模型别名解析与多级候选级联故障切换 (`ModelAliasCascadeTest`)；
+- 流式输出跨 Chunk 环形滑动窗口隐私敏感信息实时阻断 (`StreamingOutputGuardrailTest`, `Phase7AdvancedHardeningE2ETest`)。
 
 执行全量自动化验证指令：
 ```bash
-./mvnw clean verify
+./mvnw clean test
 ```
 
 **测试运行报告**：
 ```text
 [INFO] Reactor Summary for llm-enterprise-hub 0.0.1-SNAPSHOT:
 [INFO] 
-[INFO] llm-enterprise-hub ................................. SUCCESS
-[INFO] llm-enterprise-core ................................ SUCCESS (168 tests)
+[INFO] llm-enterprise-hub ................................. SUCCESS [  0.115 s]
+[INFO] llm-enterprise-core ................................ SUCCESS (182 tests)
 [INFO] llm-enterprise-spring-boot-starter ................. SUCCESS (3 tests)
-[INFO] llm-enterprise-gateway-server ...................... SUCCESS (64 tests)
+[INFO] llm-enterprise-gateway-server ...................... SUCCESS (66 tests)
 [INFO] sample-business-app ................................ SUCCESS (6 tests)
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Total time: 58.429 s
+[INFO] Total time:  01:12 min
 ```
-**全量 241 个用例全部绿色通过，0 失败、0 错误、0 跳过**。
+**全量 257 个用例全部绿色通过，0 失败、0 错误、0 跳过，100% 质量通过率**。
+

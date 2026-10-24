@@ -37,4 +37,9 @@ public record ChatCompletionRequest(
     public ChatCompletionRequest(String model, List<ChatMessage> messages, Boolean stream, Double temperature, Integer maxTokens, List<ToolDefinition> tools, Object toolChoice) {
         this(model, messages, stream, temperature, maxTokens, tools, toolChoice, null, null);
     }
+
+    public ChatCompletionRequest withModel(String newModel) {
+        return new ChatCompletionRequest(newModel, messages, stream, temperature, maxTokens, tools, toolChoice, sessionId, user);
+    }
 }
+

@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -38,6 +39,9 @@ public class FailoverRoutingService implements LlmClient {
     @Autowired(required = false)
     private com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager;
 
+    @Autowired(required = false)
+    private ModelAliasRegistry modelAliasRegistry;
+
     @Value("${llm.resilience.max-rate-limit-retries:2}")
     private int maxRateLimitRetries = 2;
 
@@ -51,7 +55,8 @@ public class FailoverRoutingService implements LlmClient {
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
             @Autowired(required = false) ContextManager contextManager,
             @Autowired(required = false) CircuitBreaker circuitBreaker,
-            @Autowired(required = false) com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager
+            @Autowired(required = false) com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager,
+            @Autowired(required = false) ModelAliasRegistry modelAliasRegistry
     ) {
         this.primaryClient = primaryClient;
         this.fallbackClient = fallbackClient;
@@ -59,6 +64,18 @@ public class FailoverRoutingService implements LlmClient {
         this.contextManager = contextManager;
         this.circuitBreaker = circuitBreaker != null ? circuitBreaker : new CircuitBreaker("primary-llm");
         this.remoteClusterManager = remoteClusterManager;
+        this.modelAliasRegistry = modelAliasRegistry;
+    }
+
+    public FailoverRoutingService(
+            @Qualifier("primaryLlmClient") LlmClient primaryClient,
+            @Qualifier("fallbackLlmClient") LlmClient fallbackClient,
+            @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
+            @Autowired(required = false) ContextManager contextManager,
+            @Autowired(required = false) CircuitBreaker circuitBreaker,
+            @Autowired(required = false) com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager
+    ) {
+        this(primaryClient, fallbackClient, fallbackModel, contextManager, circuitBreaker, remoteClusterManager, null);
     }
 
     public FailoverRoutingService(
@@ -116,7 +133,39 @@ public class FailoverRoutingService implements LlmClient {
         this.remoteClusterManager = remoteClusterManager;
     }
 
+    public ModelAliasRegistry getModelAliasRegistry() {
+        return modelAliasRegistry;
+    }
+
+
+    public void setModelAliasRegistry(ModelAliasRegistry modelAliasRegistry) {
+        this.modelAliasRegistry = modelAliasRegistry;
+    }
+
     public ChatCompletionResponse chatCompletionWithFailover(ChatCompletionRequest request) {
+        if (modelAliasRegistry != null && modelAliasRegistry.isAlias(request.model())) {
+            List<String> candidates = modelAliasRegistry.resolveCandidates(request.model());
+            for (int i = 0; i < candidates.size(); i++) {
+                String candidate = candidates.get(i);
+                ChatCompletionRequest candidateReq = request.withModel(candidate);
+                boolean isLastCandidate = (i == candidates.size() - 1);
+                try {
+                    return executeSingleModel(candidateReq, isLastCandidate);
+                } catch (LlmContentFilterException | LlmAuthenticationException | LlmInvalidRequestException fatalEx) {
+                    throw fatalEx;
+                } catch (Exception ex) {
+                    log.warn("Candidate model [{}] in alias [{}] failed: {}. Cascading...",
+                            candidate, request.model(), ex.getMessage());
+                    if (isLastCandidate) {
+                        return executeFallbackSync(request);
+                    }
+                }
+            }
+        }
+        return executeSingleModel(request, true);
+    }
+
+    private ChatCompletionResponse executeSingleModel(ChatCompletionRequest request, boolean allowFallback) {
         // 1. Try Remote Compute Cluster first if discovered and available
         if (remoteClusterManager != null && remoteClusterManager.hasActiveNodes()) {
             com.enterprise.llm.cluster.UpstreamNode node = remoteClusterManager.selectNode(request);
@@ -134,9 +183,13 @@ public class FailoverRoutingService implements LlmClient {
                         throw fatalEx;
                     } catch (Exception ex) {
                         node.recordFailure();
-                        log.warn("Remote cluster node [{}] failed, falling back to local fallback model {}: {}",
-                                node.getId(), fallbackModel, ex.getMessage());
-                        return executeFallbackSync(request);
+                        log.warn("Remote cluster node [{}] failed: {}", node.getId(), ex.getMessage());
+                        if (allowFallback) {
+                            log.warn("Falling back to local fallback model {}: {}", fallbackModel, ex.getMessage());
+                            return executeFallbackSync(request);
+                        } else {
+                            throw (ex instanceof RuntimeException re) ? re : new RuntimeException(ex);
+                        }
                     } finally {
                         node.decrementActiveRequests();
                     }
@@ -146,8 +199,12 @@ public class FailoverRoutingService implements LlmClient {
 
         // 2. Default/Safety Net routing with CircuitBreaker and Retry
         if (isCircuitOpen()) {
-            log.warn("Circuit Breaker OPEN: Bypassing primary and executing fallback directly");
-            return executeFallbackSync(request);
+            if (allowFallback) {
+                log.warn("Circuit Breaker OPEN: Bypassing primary and executing fallback directly");
+                return executeFallbackSync(request);
+            } else {
+                throw new RuntimeException("Circuit breaker OPEN for candidate: " + request.model());
+            }
         }
 
         ChatCompletionRequest currentRequest = request;
@@ -188,17 +245,44 @@ public class FailoverRoutingService implements LlmClient {
                     continue;
                 }
                 recordFailure();
-                log.warn("Rate limit retries exhausted, attempting failover to local model {}: {}", fallbackModel, rateEx.getMessage());
-                return executeFallbackSync(currentRequest);
+                log.warn("Rate limit retries exhausted: {}", rateEx.getMessage());
+                if (allowFallback) {
+                    log.warn("Attempting failover to local model {}: {}", fallbackModel, rateEx.getMessage());
+                    return executeFallbackSync(currentRequest);
+                } else {
+                    throw rateEx;
+                }
             } catch (Exception primaryEx) {
                 recordFailure();
-                log.warn("Primary LLM call failed, attempting failover to local model {}: {}", fallbackModel, primaryEx.getMessage());
-                return executeFallbackSync(currentRequest);
+                log.warn("Primary LLM call failed: {}", primaryEx.getMessage());
+                if (allowFallback) {
+                    log.warn("Attempting failover to local model {}: {}", fallbackModel, primaryEx.getMessage());
+                    return executeFallbackSync(currentRequest);
+                } else {
+                    throw (primaryEx instanceof RuntimeException re) ? re : new RuntimeException(primaryEx);
+                }
             }
         }
     }
 
+
     public StreamCancellationHandle streamChatCompletionWithFailover(
+            ChatCompletionRequest request,
+            Consumer<ChatCompletionChunk> onChunk,
+            Runnable onComplete,
+            Consumer<Throwable> onError
+    ) {
+        if (modelAliasRegistry != null && modelAliasRegistry.isAlias(request.model())) {
+            List<String> candidates = modelAliasRegistry.resolveCandidates(request.model());
+            if (!candidates.isEmpty()) {
+                ChatCompletionRequest candidateReq = request.withModel(candidates.get(0));
+                return executeSingleModelStream(candidateReq, onChunk, onComplete, onError);
+            }
+        }
+        return executeSingleModelStream(request, onChunk, onComplete, onError);
+    }
+
+    private StreamCancellationHandle executeSingleModelStream(
             ChatCompletionRequest request,
             Consumer<ChatCompletionChunk> onChunk,
             Runnable onComplete,

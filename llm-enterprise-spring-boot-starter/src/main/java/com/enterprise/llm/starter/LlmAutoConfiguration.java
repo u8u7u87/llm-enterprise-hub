@@ -134,7 +134,8 @@ public class LlmAutoConfiguration {
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
             ObjectProvider<ContextManager> contextManagerProvider,
             ObjectProvider<com.enterprise.llm.resilience.CircuitBreaker> circuitBreakerProvider,
-            ObjectProvider<com.enterprise.llm.cluster.RemoteClusterManager> clusterManagerProvider
+            ObjectProvider<com.enterprise.llm.cluster.RemoteClusterManager> clusterManagerProvider,
+            ObjectProvider<com.enterprise.llm.router.ModelAliasRegistry> modelAliasRegistryProvider
     ) {
         return new FailoverRoutingService(
                 primaryClient,
@@ -142,7 +143,8 @@ public class LlmAutoConfiguration {
                 fallbackModel,
                 contextManagerProvider.getIfAvailable(),
                 circuitBreakerProvider.getIfAvailable(),
-                clusterManagerProvider.getIfAvailable()
+                clusterManagerProvider.getIfAvailable(),
+                modelAliasRegistryProvider.getIfAvailable()
         );
     }
 
@@ -283,8 +285,11 @@ public class LlmAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(CacheEngine.class)
-    public CacheEngine cacheEngine(CacheProperties properties) {
-        return new CacheEngine(properties);
+    public CacheEngine cacheEngine(
+            CacheProperties properties,
+            ObjectProvider<com.enterprise.llm.rag.embedding.EmbeddingClient> embeddingClientProvider
+    ) {
+        return new CacheEngine(properties, embeddingClientProvider.getIfAvailable());
     }
 
     @Bean
@@ -353,4 +358,42 @@ public class LlmAutoConfiguration {
     public com.enterprise.llm.session.SessionManager sessionManager(com.enterprise.llm.session.SessionStorageProvider sessionStorageProvider) {
         return new com.enterprise.llm.session.SessionManager(sessionStorageProvider);
     }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.router.ModelAliasRegistry.class)
+    public com.enterprise.llm.router.ModelAliasRegistry modelAliasRegistry() {
+        return new com.enterprise.llm.router.ModelAliasRegistry();
+    }
+
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.cost.ModelPricingRegistry.class)
+    public com.enterprise.llm.cost.ModelPricingRegistry modelPricingRegistry() {
+        return new com.enterprise.llm.cost.ModelPricingRegistry();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.cost.CostCalculator.class)
+    public com.enterprise.llm.cost.CostCalculator costCalculator(ObjectProvider<com.enterprise.llm.cost.ModelPricingRegistry> pricingRegistryProvider) {
+        return new com.enterprise.llm.cost.CostCalculator(pricingRegistryProvider.getIfAvailable(com.enterprise.llm.cost.ModelPricingRegistry::new));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.cost.TenantBudgetManager.class)
+    public com.enterprise.llm.cost.TenantBudgetManager tenantBudgetManager() {
+        return new com.enterprise.llm.cost.TenantBudgetManager();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.enterprise.llm.guard.StreamingOutputGuardrail.class)
+    public com.enterprise.llm.guard.StreamingOutputGuardrail streamingOutputGuardrail(
+            @Value("${llm.guardrail.streaming.mode:BLOCK}") String modeStr,
+            @Value("${llm.guardrail.streaming.overlap-size:64}") int overlapSize
+    ) {
+        com.enterprise.llm.guard.StreamingOutputGuardrail.Mode mode = "MASK".equalsIgnoreCase(modeStr)
+                ? com.enterprise.llm.guard.StreamingOutputGuardrail.Mode.MASK
+                : com.enterprise.llm.guard.StreamingOutputGuardrail.Mode.BLOCK;
+        return new com.enterprise.llm.guard.StreamingOutputGuardrail(mode, overlapSize);
+    }
 }
+

@@ -19,6 +19,7 @@ public class LlmSpan {
 
     private int promptTokens;
     private int completionTokens;
+    private double costUsd;
     private com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector = com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
 
     public LlmSpan(String name, TraceContext context, String model) {
@@ -59,6 +60,11 @@ public class LlmSpan {
         }
     }
 
+    public void finish(long endTimeMs, int promptTokens, int completionTokens, double costUsd) {
+        this.costUsd = costUsd;
+        finish(endTimeMs, promptTokens, completionTokens);
+    }
+
     public void finish(long endTimeMs, int promptTokens, int completionTokens) {
         this.endTimeMs = endTimeMs;
         this.promptTokens = promptTokens;
@@ -79,6 +85,15 @@ public class LlmSpan {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    public double getCostUsd() {
+        return costUsd;
+    }
+
+    public LlmSpan setCostUsd(double costUsd) {
+        this.costUsd = costUsd;
+        return this;
     }
 
     public long getTtftMs() {

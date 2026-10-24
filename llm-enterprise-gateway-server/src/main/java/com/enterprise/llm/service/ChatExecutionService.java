@@ -46,6 +46,9 @@ public class ChatExecutionService {
     private final TraceCollector traceCollector;
     private final com.enterprise.llm.session.SessionManager sessionManager;
     private final com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector;
+    private final com.enterprise.llm.cost.CostCalculator costCalculator;
+    private final com.enterprise.llm.cost.TenantBudgetManager tenantBudgetManager;
+    private final com.enterprise.llm.guard.StreamingOutputGuardrail streamingOutputGuardrail;
     private final ObjectMapper objectMapper;
 
     @Autowired
@@ -59,7 +62,10 @@ public class ChatExecutionService {
             @Autowired(required = false) TraceCollector traceCollector,
             @Autowired(required = false) com.enterprise.llm.session.SessionManager sessionManager,
             @Autowired(required = false) com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector,
-            @Autowired(required = false) com.enterprise.llm.agent.StreamingAgentOrchestrator streamingAgentOrchestrator
+            @Autowired(required = false) com.enterprise.llm.agent.StreamingAgentOrchestrator streamingAgentOrchestrator,
+            @Autowired(required = false) com.enterprise.llm.cost.CostCalculator costCalculator,
+            @Autowired(required = false) com.enterprise.llm.cost.TenantBudgetManager tenantBudgetManager,
+            @Autowired(required = false) com.enterprise.llm.guard.StreamingOutputGuardrail streamingOutputGuardrail
     ) {
         this.failoverRoutingService = failoverRoutingService;
         this.tenantQuotaService = tenantQuotaService;
@@ -73,7 +79,25 @@ public class ChatExecutionService {
         this.streamingAgentOrchestrator = streamingAgentOrchestrator != null
                 ? streamingAgentOrchestrator
                 : (agentToolOrchestrator != null ? new com.enterprise.llm.agent.StreamingAgentOrchestrator(agentToolOrchestrator) : null);
+        this.costCalculator = costCalculator;
+        this.tenantBudgetManager = tenantBudgetManager;
+        this.streamingOutputGuardrail = streamingOutputGuardrail;
         this.objectMapper = new ObjectMapper();
+    }
+
+    public ChatExecutionService(
+            FailoverRoutingService failoverRoutingService,
+            TenantQuotaService tenantQuotaService,
+            TokenEstimator tokenEstimator,
+            CacheEngine cacheEngine,
+            AgentToolOrchestrator agentToolOrchestrator,
+            ContextManager contextManager,
+            TraceCollector traceCollector,
+            com.enterprise.llm.session.SessionManager sessionManager,
+            com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector,
+            com.enterprise.llm.agent.StreamingAgentOrchestrator streamingAgentOrchestrator
+    ) {
+        this(failoverRoutingService, tenantQuotaService, tokenEstimator, cacheEngine, agentToolOrchestrator, contextManager, traceCollector, sessionManager, metricsCollector, streamingAgentOrchestrator, null, null, null);
     }
 
     public ChatExecutionService(
@@ -175,6 +199,10 @@ public class ChatExecutionService {
             effectiveRequest.tools().forEach(t -> span.addToolInvoked(t.name()));
         }
 
+        if (tenantBudgetManager != null && tenantId != null) {
+            tenantBudgetManager.checkBudget(tenantId);
+        }
+
         try {
             ChatCompletionResponse response;
             if (effectiveRequest.tools() != null && !effectiveRequest.tools().isEmpty() && agentToolOrchestrator != null) {
@@ -224,6 +252,14 @@ public class ChatExecutionService {
                 }
             }
 
+            if (costCalculator != null) {
+                double cost = costCalculator.calculateCostUsd(effectiveRequest.model(), promptTokens, completionTokens);
+                span.setCostUsd(cost);
+                if (tenantBudgetManager != null && tenantId != null) {
+                    tenantBudgetManager.recordSpend(tenantId, cost);
+                }
+            }
+
             long endTimeMs = System.currentTimeMillis();
             span.finish(endTimeMs, promptTokens, completionTokens);
             if (traceCollector != null) {
@@ -258,6 +294,11 @@ public class ChatExecutionService {
                 : (TraceContext.getCurrent() != null && TraceContext.getCurrent().tenantId() != null
                     ? TraceContext.getCurrent().tenantId() : "default");
 
+        if (tenantBudgetManager != null && tenantId != null) {
+            tenantBudgetManager.checkBudget(tenantId);
+        }
+
+
         ChatCompletionRequest sessionRequest = (sessionManager != null)
                 ? sessionManager.mergeSessionHistory(request, tenantId)
                 : request;
@@ -278,6 +319,8 @@ public class ChatExecutionService {
         final StreamCancellationHandle[] handleHolder = new StreamCancellationHandle[1];
         final AtomicInteger generatedTokens = new AtomicInteger(0);
         final AtomicReference<StringBuilder> streamContentAcc = new AtomicReference<>(new StringBuilder());
+        final com.enterprise.llm.guard.StreamingOutputGuardrail.StreamSession guardSession =
+                (streamingOutputGuardrail != null) ? streamingOutputGuardrail.newSession() : null;
 
         SseEmitter emitter = new SseEmitter(120_000L) {
             @Override
@@ -303,21 +346,31 @@ public class ChatExecutionService {
                     span.recordFirstToken(System.currentTimeMillis());
                 }
                 if (chunk != null) {
-                    if (chunk.usage() != null && chunk.usage().totalTokens() != null) {
-                        generatedTokens.set(chunk.usage().totalTokens());
-                    } else if (tokenEstimator != null && chunk.choices() != null) {
+                    if (chunk.choices() != null) {
                         for (var choice : chunk.choices()) {
                             if (choice.delta() != null && choice.delta().content() != null) {
-                                generatedTokens.addAndGet(tokenEstimator.countTokens(choice.delta().content()));
-                                streamContentAcc.get().append(choice.delta().content());
+                                String content = choice.delta().content();
+                                if (guardSession != null) {
+                                    var result = guardSession.inspect(content);
+                                    if (result.blocked()) {
+                                        throw new com.enterprise.llm.guard.StreamingGuardrailException(result.violationType(), content);
+                                    }
+                                }
+                                if (tokenEstimator != null) {
+                                    generatedTokens.addAndGet(tokenEstimator.countTokens(content));
+                                }
+                                streamContentAcc.get().append(content);
                             }
                         }
+                    }
+                    if (chunk.usage() != null && chunk.usage().totalTokens() != null) {
+                        generatedTokens.set(chunk.usage().totalTokens());
                     }
                 }
                 String jsonChunk = objectMapper.writeValueAsString(chunk);
                 emitter.send(SseEmitter.event().data(jsonChunk));
-            } catch (IOException e) {
-                log.warn("Failed to push chunk to client emitter, aborting", e);
+            } catch (Exception e) {
+                log.warn("Failed or blocked during streaming output, aborting", e);
                 emitter.completeWithError(e);
             }
         };
@@ -358,12 +411,21 @@ public class ChatExecutionService {
                     }
                 }
 
+                if (costCalculator != null) {
+                    double cost = costCalculator.calculateCostUsd(effectiveRequest.model(), promptTokens, generatedTokens.get());
+                    span.setCostUsd(cost);
+                    if (tenantBudgetManager != null && tenantId != null) {
+                        tenantBudgetManager.recordSpend(tenantId, cost);
+                    }
+                }
+
                 long endTimeMs = System.currentTimeMillis();
                 span.finish(endTimeMs, promptTokens, generatedTokens.get());
                 if (traceCollector != null) {
                     traceCollector.collect(span);
                 }
                 RequestAuditLogger.logAudit(span, 200);
+
 
                 emitter.send(SseEmitter.event().data("[DONE]"));
                 emitter.complete();

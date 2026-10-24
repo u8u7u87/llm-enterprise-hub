@@ -2,6 +2,7 @@ package com.enterprise.llm.rag.embedding;
 
 import java.util.List;
 
+@FunctionalInterface
 public interface EmbeddingClient {
 
     /**
@@ -18,5 +19,11 @@ public interface EmbeddingClient {
      * @param texts list of input texts
      * @return list of dense embedding vectors
      */
-    List<float[]> embedBatch(List<String> texts);
+    default List<float[]> embedBatch(List<String> texts) {
+        if (texts == null) {
+            return List.of();
+        }
+        return texts.stream().map(this::embed).toList();
+    }
 }
+

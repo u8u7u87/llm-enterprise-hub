@@ -43,6 +43,7 @@ public class RequestAuditLogger {
             audit.put("promptTokens", span.getPromptTokens());
             audit.put("completionTokens", span.getCompletionTokens());
             audit.put("totalTokens", span.getTotalTokens());
+            audit.put("costUsd", span.getCostUsd());
             audit.put("toolsInvoked", span.getToolsInvoked());
             audit.put("statusCode", statusCode);
             if (errorMessage != null && !errorMessage.isBlank()) {

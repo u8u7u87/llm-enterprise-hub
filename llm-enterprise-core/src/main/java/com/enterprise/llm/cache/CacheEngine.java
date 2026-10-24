@@ -23,6 +23,7 @@ public class CacheEngine {
     private static final Logger log = LoggerFactory.getLogger(CacheEngine.class);
 
     private final CacheProperties properties;
+    private final com.enterprise.llm.rag.embedding.EmbeddingClient embeddingClient;
     private final ConcurrentHashMap<String, CacheEntry> l1Map = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<CacheEntry> semanticEntries = new CopyOnWriteArrayList<>();
 
@@ -31,9 +32,24 @@ public class CacheEngine {
     private final AtomicLong misses = new AtomicLong(0);
     private final AtomicLong savedTokens = new AtomicLong(0);
 
-    public CacheEngine(CacheProperties properties) {
-        this.properties = properties;
+    @org.springframework.beans.factory.annotation.Autowired
+    public CacheEngine(
+            CacheProperties properties,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.enterprise.llm.rag.embedding.EmbeddingClient embeddingClient
+    ) {
+        this.properties = properties != null ? properties : new CacheProperties();
+        this.embeddingClient = embeddingClient;
     }
+
+    public CacheEngine(CacheProperties properties) {
+        this(properties, null);
+    }
+
+    public CacheEngine() {
+        this(new CacheProperties(), null);
+    }
+
 
     public Optional<ChatCompletionResponse> lookup(ChatCompletionRequest request) {
         TenantEntity tenant = TenantSecurityContext.getCurrentTenant();
@@ -66,24 +82,55 @@ public class CacheEngine {
         // 2. L2 Semantic Similarity Lookup (strictly scoped by tenantId)
         String prompt = extractPromptText(request);
         if (!prompt.isBlank() && !semanticEntries.isEmpty()) {
-            Set<String> queryWords = extractWordTokens(prompt);
             CacheEntry bestMatch = null;
             double bestScore = 0.0;
 
-            for (CacheEntry entry : semanticEntries) {
-                if (entry.isExpired()) {
-                    semanticEntries.remove(entry);
-                    l1Map.remove(entry.key());
-                    continue;
+            float[] queryVector = null;
+            if (embeddingClient != null) {
+                try {
+                    queryVector = embeddingClient.embed(prompt);
+                } catch (Exception e) {
+                    log.debug("Embedding generation failed for semantic cache lookup, falling back to Jaccard: {}", e.getMessage());
                 }
-                if (!Objects.equals(entry.tenantId(), effectiveTenantId)) {
-                    continue;
+            }
+
+            if (queryVector != null && queryVector.length > 0) {
+                // Vector Cosine Similarity
+                for (CacheEntry entry : semanticEntries) {
+                    if (entry.isExpired()) {
+                        semanticEntries.remove(entry);
+                        l1Map.remove(entry.key());
+                        continue;
+                    }
+                    if (!Objects.equals(entry.tenantId(), effectiveTenantId)) {
+                        continue;
+                    }
+                    if (entry.vector() != null) {
+                        double cos = computeCosineSimilarity(queryVector, entry.vector());
+                        if (cos > bestScore) {
+                            bestScore = cos;
+                            bestMatch = entry;
+                        }
+                    }
                 }
-                Set<String> targetWords = extractWordTokens(entry.promptText());
-                double score = computeJaccardSimilarity(queryWords, targetWords);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMatch = entry;
+            } else {
+                // Lexical Jaccard Fallback
+                Set<String> queryWords = extractWordTokens(prompt);
+                for (CacheEntry entry : semanticEntries) {
+                    if (entry.isExpired()) {
+                        semanticEntries.remove(entry);
+                        l1Map.remove(entry.key());
+                        continue;
+                    }
+                    if (!Objects.equals(entry.tenantId(), effectiveTenantId)) {
+                        continue;
+                    }
+                    Set<String> targetWords = extractWordTokens(entry.promptText());
+                    double score = computeJaccardSimilarity(queryWords, targetWords);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = entry;
+                    }
                 }
             }
 
@@ -122,7 +169,16 @@ public class CacheEngine {
         long now = System.currentTimeMillis();
         long expireAt = now + (properties.getTtlSeconds() * 1000L);
 
-        CacheEntry entry = new CacheEntry(key, effectiveTenantId, prompt, response, now, expireAt);
+        float[] vector = null;
+        if (embeddingClient != null && !prompt.isBlank()) {
+            try {
+                vector = embeddingClient.embed(prompt);
+            } catch (Exception e) {
+                log.debug("Failed to generate embedding for cache entry: {}", e.getMessage());
+            }
+        }
+
+        CacheEntry entry = new CacheEntry(key, effectiveTenantId, prompt, response, now, expireAt, vector);
         l1Map.put(key, entry);
         semanticEntries.add(entry);
     }
@@ -207,6 +263,24 @@ public class CacheEngine {
         }
         int union = setA.size() + setB.size() - intersection;
         return union == 0 ? 0.0 : (double) intersection / (double) union;
+    }
+
+    private double computeCosineSimilarity(float[] v1, float[] v2) {
+        if (v1 == null || v2 == null || v1.length != v2.length || v1.length == 0) {
+            return 0.0;
+        }
+        double dot = 0.0;
+        double norm1 = 0.0;
+        double norm2 = 0.0;
+        for (int i = 0; i < v1.length; i++) {
+            dot += v1[i] * v2[i];
+            norm1 += v1[i] * v1[i];
+            norm2 += v2[i] * v2[i];
+        }
+        if (norm1 == 0.0 || norm2 == 0.0) {
+            return 0.0;
+        }
+        return dot / (Math.sqrt(norm1) * Math.sqrt(norm2));
     }
 
     private String sha256(String input) {

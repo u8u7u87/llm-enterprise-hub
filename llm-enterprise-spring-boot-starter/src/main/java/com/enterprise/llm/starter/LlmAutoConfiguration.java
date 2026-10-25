@@ -1,5 +1,6 @@
 package com.enterprise.llm.starter;
 
+import java.util.List;
 import com.enterprise.llm.agent.AgentToolOrchestrator;
 import com.enterprise.llm.agent.ToolRegistry;
 import com.enterprise.llm.agent.annotation.LlmToolBeanPostProcessor;
@@ -47,6 +48,10 @@ import com.enterprise.llm.tenant.TenantService;
 import com.enterprise.llm.tenant.TenantStorageProvider;
 import com.enterprise.llm.token.TokenEstimator;
 import com.enterprise.llm.trace.LangfuseTraceExporter;
+import com.enterprise.llm.backend.InferenceBackendAdapter;
+import com.enterprise.llm.backend.InferenceBackendProperties;
+import com.enterprise.llm.backend.InferenceBackendRegistry;
+import com.enterprise.llm.backend.adapter.*;
 import com.enterprise.llm.trace.TraceCollector;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -65,7 +70,8 @@ import org.springframework.context.annotation.Import;
         CacheProperties.class,
         PromptSecurityProperties.class,
         DlpPolicyProperties.class,
-        ToolPolicyProperties.class
+        ToolPolicyProperties.class,
+        InferenceBackendProperties.class
 })
 public class LlmAutoConfiguration {
 
@@ -99,20 +105,64 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(DirectInferenceAdapter.class)
+    public DirectInferenceAdapter directInferenceAdapter() {
+        return new DirectInferenceAdapter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(VllmInferenceAdapter.class)
+    public VllmInferenceAdapter vllmInferenceAdapter() {
+        return new VllmInferenceAdapter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(SglangInferenceAdapter.class)
+    public SglangInferenceAdapter sglangInferenceAdapter() {
+        return new SglangInferenceAdapter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(TritonInferenceAdapter.class)
+    public TritonInferenceAdapter tritonInferenceAdapter() {
+        return new TritonInferenceAdapter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(RayServeInferenceAdapter.class)
+    public RayServeInferenceAdapter rayServeInferenceAdapter() {
+        return new RayServeInferenceAdapter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(InferenceBackendRegistry.class)
+    public InferenceBackendRegistry inferenceBackendRegistry(
+            InferenceBackendProperties properties,
+            List<InferenceBackendAdapter> adapters
+    ) {
+        return new InferenceBackendRegistry(adapters, properties.getEngine());
+    }
+
+    @Bean
     @ConditionalOnMissingBean(com.enterprise.llm.cluster.RemoteClusterManager.class)
     public com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager(
             @Value("${llm.cluster.enabled:false}") boolean clusterEnabled,
             @Value("${llm.cluster.dns-discovery:}") String dnsDiscovery,
             @Value("${llm.cluster.static-nodes:}") String staticNodes,
             @Value("${llm.cluster.discovery-interval-seconds:15}") long discoveryInterval,
-            ObjectProvider<com.enterprise.llm.cluster.lb.ClusterLoadBalancer> lbProvider
+            ObjectProvider<com.enterprise.llm.cluster.lb.ClusterLoadBalancer> lbProvider,
+            InferenceBackendRegistry backendRegistry
     ) {
         if (!clusterEnabled && (dnsDiscovery == null || dnsDiscovery.isBlank()) && (staticNodes == null || staticNodes.isBlank())) {
             return null;
         }
 
-        com.enterprise.llm.cluster.lb.ClusterLoadBalancer lb = lbProvider.getIfAvailable(com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer::new);
-        com.enterprise.llm.cluster.RemoteClusterManager manager = new com.enterprise.llm.cluster.RemoteClusterManager(new java.util.ArrayList<>(), lb);
+        com.enterprise.llm.cluster.lb.ClusterLoadBalancer lb = lbProvider.getIfAvailable(() ->
+                backendRegistry != null ? backendRegistry.getDefaultAdapter().createDefaultLoadBalancer() : new com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer()
+        );
+        com.enterprise.llm.cluster.RemoteClusterManager manager = new com.enterprise.llm.cluster.RemoteClusterManager(
+                new java.util.ArrayList<>(), lb, null, backendRegistry
+        );
 
         if (dnsDiscovery != null && !dnsDiscovery.isBlank()) {
             manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.DnsClusterDiscoveryProvider());

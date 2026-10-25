@@ -1,5 +1,7 @@
 package com.enterprise.llm.cluster;
 
+import com.enterprise.llm.backend.InferenceBackendAdapter;
+import com.enterprise.llm.backend.InferenceBackendRegistry;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.client.OpenAiCompatibleLlmClient;
 import com.enterprise.llm.cluster.discovery.ClusterDiscoveryProvider;
@@ -29,27 +31,38 @@ public class RemoteClusterManager {
     private final Map<String, LlmClient> clientCache;
     private final Function<UpstreamNode, LlmClient> clientFactory;
     private volatile ClusterLoadBalancer loadBalancer;
+    private volatile InferenceBackendRegistry backendRegistry;
     private ScheduledExecutorService scheduledExecutor;
+
+    public RemoteClusterManager(
+            List<ClusterDiscoveryProvider> discoveryProviders,
+            ClusterLoadBalancer loadBalancer,
+            Function<UpstreamNode, LlmClient> clientFactory,
+            InferenceBackendRegistry backendRegistry
+    ) {
+        this.discoveryProviders = discoveryProviders != null ? new CopyOnWriteArrayList<>(discoveryProviders) : new CopyOnWriteArrayList<>();
+        this.discoveryTargets = ConcurrentHashMap.newKeySet();
+        this.activeNodes = new ConcurrentHashMap<>();
+        this.clientCache = new ConcurrentHashMap<>();
+        this.backendRegistry = backendRegistry != null ? backendRegistry : new InferenceBackendRegistry();
+        this.loadBalancer = loadBalancer != null ? loadBalancer : this.backendRegistry.getDefaultAdapter().createDefaultLoadBalancer();
+        this.clientFactory = clientFactory != null ? clientFactory : node -> new OpenAiCompatibleLlmClient(node.getBaseUrl(), node.getApiKeyPool());
+    }
 
     public RemoteClusterManager(
             List<ClusterDiscoveryProvider> discoveryProviders,
             ClusterLoadBalancer loadBalancer,
             Function<UpstreamNode, LlmClient> clientFactory
     ) {
-        this.discoveryProviders = discoveryProviders != null ? new CopyOnWriteArrayList<>(discoveryProviders) : new CopyOnWriteArrayList<>();
-        this.discoveryTargets = ConcurrentHashMap.newKeySet();
-        this.activeNodes = new ConcurrentHashMap<>();
-        this.clientCache = new ConcurrentHashMap<>();
-        this.loadBalancer = loadBalancer != null ? loadBalancer : new LeastRequestsLoadBalancer();
-        this.clientFactory = clientFactory != null ? clientFactory : node -> new OpenAiCompatibleLlmClient(node.getBaseUrl(), node.getApiKeyPool());
+        this(discoveryProviders, loadBalancer, clientFactory, null);
     }
 
     public RemoteClusterManager(List<ClusterDiscoveryProvider> discoveryProviders, ClusterLoadBalancer loadBalancer) {
-        this(discoveryProviders, loadBalancer, null);
+        this(discoveryProviders, loadBalancer, null, null);
     }
 
     public RemoteClusterManager() {
-        this(new ArrayList<>(), new LeastRequestsLoadBalancer(), null);
+        this(new ArrayList<>(), null, null, null);
     }
 
     public void registerDiscoveryProvider(ClusterDiscoveryProvider provider) {
@@ -72,6 +85,37 @@ public class RemoteClusterManager {
 
     public ClusterLoadBalancer getLoadBalancer() {
         return loadBalancer;
+    }
+
+    public InferenceBackendRegistry getBackendRegistry() {
+        return backendRegistry;
+    }
+
+    public void setBackendRegistry(InferenceBackendRegistry backendRegistry) {
+        if (backendRegistry != null) {
+            this.backendRegistry = backendRegistry;
+        }
+    }
+
+    /**
+     * Probes all active nodes using their corresponding InferenceBackendAdapter.
+     * Updates healthy state and extracts queue/cache metrics.
+     */
+    public void probeHealthAndMetrics() {
+        if (backendRegistry == null || activeNodes.isEmpty()) {
+            return;
+        }
+        for (UpstreamNode node : activeNodes.values()) {
+            try {
+                InferenceBackendAdapter adapter = backendRegistry.getAdapter(node.getEngineType());
+                if (adapter != null) {
+                    boolean healthy = adapter.checkHealth(node, null);
+                    node.setHealthy(healthy);
+                }
+            } catch (Exception e) {
+                log.debug("Failed probing health for node [{}]: {}", node.getId(), e.getMessage());
+            }
+        }
     }
 
     /**

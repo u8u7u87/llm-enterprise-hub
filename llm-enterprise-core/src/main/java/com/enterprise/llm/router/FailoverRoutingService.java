@@ -174,7 +174,14 @@ public class FailoverRoutingService implements LlmClient {
                 if (nodeClient != null) {
                     node.incrementActiveRequests();
                     try {
-                        ChatCompletionResponse response = nodeClient.chatCompletion(request);
+                        ChatCompletionRequest effectiveNodeReq = request;
+                        if (remoteClusterManager.getBackendRegistry() != null) {
+                            com.enterprise.llm.backend.InferenceBackendAdapter adapter = remoteClusterManager.getBackendRegistry().getAdapter(node.getEngineType());
+                            if (adapter != null) {
+                                effectiveNodeReq = adapter.adaptRequest(request, node);
+                            }
+                        }
+                        ChatCompletionResponse response = nodeClient.chatCompletion(effectiveNodeReq);
                         node.recordSuccess();
                         return response;
                     } catch (LlmContentFilterException | LlmAuthenticationException | LlmInvalidRequestException fatalEx) {
@@ -300,8 +307,15 @@ public class FailoverRoutingService implements LlmClient {
                     node.incrementActiveRequests();
                     final StreamCancellationHandle[] remoteHandle = new StreamCancellationHandle[1];
                     final AtomicBoolean remoteChunkReceived = new AtomicBoolean(false);
+                    ChatCompletionRequest effectiveStreamReq = request;
+                    if (remoteClusterManager.getBackendRegistry() != null) {
+                        com.enterprise.llm.backend.InferenceBackendAdapter adapter = remoteClusterManager.getBackendRegistry().getAdapter(node.getEngineType());
+                        if (adapter != null) {
+                            effectiveStreamReq = adapter.adaptRequest(request, node);
+                        }
+                    }
                     remoteHandle[0] = nodeClient.streamChatCompletion(
-                            request,
+                            effectiveStreamReq,
                             chunk -> {
                                 remoteChunkReceived.set(true);
                                 node.recordSuccess();

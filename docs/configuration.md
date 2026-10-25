@@ -70,6 +70,12 @@ spring:
 
 ```yaml
 llm:
+  # 推理后端引擎选择：direct (无框架/默认), vllm, sglang, triton, ray, 或自定义扩展
+  backend:
+    engine: "direct"                         # 默认 direct (无框架独立模式)
+    max-waiting-requests: 20                 # 后端排队过载阈值
+    max-gpu-cache-usage: 0.95                # GPU 显存饱和阈值 (95%)
+
   # 远程 GPU 推理集群自感知与调度 (可选)
   cluster:
     enabled: false                           # 集群动态调度总开关

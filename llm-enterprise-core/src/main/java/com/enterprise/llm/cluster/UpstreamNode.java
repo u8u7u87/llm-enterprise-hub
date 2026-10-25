@@ -24,6 +24,9 @@ public class UpstreamNode {
     private final CircuitBreaker circuitBreaker;
     private final Set<String> supportedModels;
     private final Map<String, String> metadata;
+    private volatile String engineType = "direct";
+    private final AtomicInteger waitingRequests = new AtomicInteger(0);
+    private volatile double gpuCacheUsage = 0.0;
 
     public UpstreamNode(String id, String baseUrl, String apiKey, int weight) {
         this.id = id;
@@ -146,6 +149,50 @@ public class UpstreamNode {
             if (pattern.endsWith("*") && model.startsWith(pattern.substring(0, pattern.length() - 1))) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    public String getEngineType() {
+        return engineType;
+    }
+
+    public void setEngineType(String engineType) {
+        if (engineType != null && !engineType.isBlank()) {
+            this.engineType = engineType.trim().toLowerCase();
+        }
+    }
+
+    public int getWaitingRequests() {
+        return waitingRequests.get();
+    }
+
+    public void setWaitingRequests(int count) {
+        this.waitingRequests.set(Math.max(0, count));
+    }
+
+    public int incrementWaitingRequests() {
+        return waitingRequests.incrementAndGet();
+    }
+
+    public int decrementWaitingRequests() {
+        return waitingRequests.updateAndGet(curr -> Math.max(0, curr - 1));
+    }
+
+    public double getGpuCacheUsage() {
+        return gpuCacheUsage;
+    }
+
+    public void setGpuCacheUsage(double gpuCacheUsage) {
+        this.gpuCacheUsage = Math.max(0.0, Math.min(1.0, gpuCacheUsage));
+    }
+
+    public boolean isOverloaded(int maxWaitingThreshold, double maxGpuCacheThreshold) {
+        if (maxWaitingThreshold > 0 && waitingRequests.get() >= maxWaitingThreshold) {
+            return true;
+        }
+        if (maxGpuCacheThreshold > 0.0 && gpuCacheUsage >= maxGpuCacheThreshold) {
+            return true;
         }
         return false;
     }

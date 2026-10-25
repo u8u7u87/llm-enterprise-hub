@@ -16,7 +16,7 @@
   既可作为<b>独立高性能网关</b>开箱即用，亦可作为 <b>Spring Boot Starter</b> 深度内嵌于企业已有微服务中。
 </p>
 
-[快速开始](#-新手极速接入-quick-start) • [同类竞品对比](#-同类主流开源竞品深度对比) • [核心能力矩阵](#-核心能力体系全景) • [系统架构设计](docs/architecture.md) • [三大部署形态](docs/deployment-modes.md) • [多推理后端适配](docs/pluggable-inference-backend.md) • [API 接入参考](docs/api-reference.md) • [配置字典](docs/configuration.md)
+[快速开始](#-新手极速接入-quick-start) • [生态定位与上下游](docs/ecosystem-positioning.md) • [同类竞品对比](#-同类主流开源竞品深度对比) • [核心能力矩阵](#-核心能力体系全景) • [系统架构设计](docs/architecture.md) • [三大部署形态](docs/deployment-modes.md) • [多推理后端适配](docs/pluggable-inference-backend.md) • [API 接入参考](docs/api-reference.md) • [配置字典](docs/configuration.md)
 
 </div>
 
@@ -32,6 +32,61 @@
 4. **企业 Java 生态割裂严重**：主流开源网关多由 Python 或 Go 编写，国内绝大多数以 Java/Spring 生态为主体的金融、电商、政企后端团队难以深度定制，更无法将已有 `@Service` 业务方法零代码无缝转化为 Agent Tool。
 
 **LLM Enterprise Hub** 应运而生。它以 **Java 21 虚拟线程 (Virtual Threads)** 为高并发底座，以 **Agent Harness 状态机** 与 **三层租约配额机制** 为中枢骨架，打造高吞吐、强安全、全自愈的企业级 AI 基础设施。
+
+---
+
+## 🧭 在线服务全景定位与上下游生态 (Ecosystem Positioning)
+
+为了让开发者与架构师准确把握系统定位，下图展示了 **LLM Enterprise Hub** 在现代企业级大模型在线服务全景体系中所处的宏观层级与端到端协作拓扑：
+
+```mermaid
+flowchart TD
+    subgraph L1["【上游：业务应用与智能体编排层 (Client & Agent Orchestration)】"]
+        App["企业微服务群 (Spring Boot / Java)"]
+        UI["前端与客户端 (Open-WebUI / NextChat)"]
+        Orch["Agent 编排框架 (LangChain / Spring AI / LlamaIndex)"]
+    end
+
+    subgraph L2["【中枢：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub - 本项目)】"]
+        direction TB
+        L2_1["统一 OpenAI 兼容接入 • 多租户鉴权 • 分布式 Token 租约预占 (Leasing)"]
+        L2_2["双向全链路安全 (Prompt 注入主动防御 + 跨 Chunk 环形滑动脱敏 DLP)"]
+        L2_3["推理感知复合调度 (InferenceAwareLB 前缀缓存亲和 + 排队/显存感知)"]
+        L2_4["长程 Agent Harness 状态机 (事务 Checkpoint 断点自愈 + 本地微服务 @LlmTool 注入)"]
+        L2_5["L1 精确哈希 + L2 稠密向量语义缓存 (Dense Vector Cache)"]
+    end
+
+    subgraph L3["【下游：算力调度平台与高性能推理后端 (Inference & Scheduling)】"]
+        Engines["私有高性能推理引擎 (vLLM / SGLang / Triton / llama.cpp)"]
+        Schedulers["分布式算力调度平台 (Ray / Ray Serve / K8s + Keda)"]
+        CloudSaaS["商业闭源云端模型 (DeepSeek / OpenAI / 阿里通义 / 智谱)"]
+    end
+
+    subgraph L4["【基础：存储与数据基础设施 (Hardware & Data Foundation)】"]
+        DB["持久化与向量底座 (Milvus 2.x / Redis 7.x / SQLite 3.x WAL)"]
+    end
+
+    L1 -->|"① 标准 OpenAI 协议 / SSE 流式 / 自定义租户头"| L2
+    L2 -->|"② 前缀哈希亲和 / 实时指标探测 / 故障降级"| L3
+    L2 -.->|"③ 状态快照持久化 / 稠密向量检索 / 租约控制"| L4
+```
+
+### 1. 本项目所处的层级与核心定位
+- **核心层级**：**第 2 层 —— 企业级智能业务网关与 Agent 治理中枢（Enterprise AI Gateway & Agent Governance Layer）**；
+- **定位边界**：
+  - **向下**：不重复制造底层模型推理算子（不做 CUDA 核函数优化，避免重复发明 vLLM/SGLang 的 PagedAttention），而是通过专有适配器深度感知下游的排队状态与缓存亲和；
+  - **向上**：不与上层端到端低代码应用平台（如 Dify/FastGPT）争夺 UI 画板，而是专注于为企业微服务与各种客户端提供**坚如磐石的高并发管控底座与 Java 原生嵌入能力**。
+
+### 2. 上下游开源框架协同矩阵
+| 方向 | 典型开源框架 / 系统 | 相互协同配合方式 |
+| :--- | :--- | :--- |
+| **上游 (Upstream)** | **Spring Cloud / 业务微服务**<br>**LangChain / Spring AI / LlamaIndex**<br>**Open-WebUI / NextChat** | • **协议标准互通**：标准 OpenAI RESTful / SSE 协议，现有应用 0 代码修改即可接入；<br>• **企业安全增强**：业务请求进入时由 Hub 进行多租户鉴权、Token 租约预占、Prompt 注入防御与流式脱敏；<br>• **微服务能力化**：使用 `@LlmTool` 注解将企业现有 Spring Service 方法零代码暴露为 Agent 工具。 |
+| **中枢 (本项目)** | **LLM Enterprise Hub** | **承上启下的核心枢纽**：负责并发削峰、多租户配额、敏感脱敏、语义缓存、智能体断点容灾、多后端感知路由。 |
+| **下游 (Downstream)** | **vLLM / SGLang / Triton**<br>**Ray / Ray Serve**<br>**llama.cpp / Ollama**<br>**商业云 API (DeepSeek/OpenAI)** | • **算力负载均衡**：通过 `InferenceAwareLoadBalancer` 实时感知 vLLM/SGLang 排队深度与显存占用；<br>• **KV Cache 亲和**：提取 Prompt 前缀哈希实现 APC (Automatic Prefix Caching) 亲和路由；<br>• **算力自动降级**：私有算力故障或过载时，无缝透明降级至备用云端 API 或本地轻量模型。 |
+| **基建 (Foundation)** | **Milvus / Redis / SQLite** | • **向量语义缓存**：稠密向量余弦计算，毫秒级直接拦截重复语义请求；<br>• **分布式租约**：Redis Lua 脚本原子预占配额，避免集群并发额度击穿；<br>• **状态机快照**：SQLite WAL / 数据库事务级保存 Agent 交互状态，支撑故障自愈断点续跑。 |
+
+> 📖 **深入阅读**：关于体系架构 4 层模型、5 大竞品阵营深度剖析与端到端协同场景时序，详见：  
+> 👉 [**LLM 在线服务全景生态定位与协同白皮书 (docs/ecosystem-positioning.md)**](docs/ecosystem-positioning.md)
 
 ---
 
@@ -244,8 +299,11 @@ llm-enterprise-hub/
 ├── samples/sample-business-app/       # 官方接入实战工程：展示如何在真实业务微服务中使用 Starter 与 @LlmTool
 ├── benchmark/                         # 性能压测模块：SQLite WAL 性能压测与高并发基准测试套件
 └── docs/                              # 体系化子文档目录
+    ├── ecosystem-positioning.md       # 全景生态定位与上下游协同白皮书
     ├── architecture.md                # 系统架构与模块设计
     ├── features.md                    # 核心特性与技术实现详解
+    ├── deployment-modes.md            # 三大部署形态手册 (单机/网关/分布式)
+    ├── pluggable-inference-backend.md # 多推理后端适配 (Direct/vLLM/SGLang/Triton/Ray)
     ├── api-reference.md               # 全量 RESTful API 规范与示例
     └── configuration.md               # 生产级配置完全指南
 ```
@@ -258,6 +316,7 @@ llm-enterprise-hub/
 
 | 专注文档 | 核心内容提要 | 链接直达 |
 | :--- | :--- | :--- |
+| 🧭 **生态定位与协同** | 在线服务体系 4 层定位、同类竞品边界剖析、上下游框架全景与端到端配合机制 | [docs/ecosystem-positioning.md](docs/ecosystem-positioning.md) |
 | 🏛 **系统架构设计** | 4 阶段请求拓扑、5 大模块职责、时序图、Java 21 虚拟线程并发模型 | [docs/architecture.md](docs/architecture.md) |
 | ⚡ **核心特性剖析** | 35+ 项深度企业特性拆解：Canary 灰度、Token 租约、Swarm 协同、流式滑动脱敏 | [docs/features.md](docs/features.md) |
 | 📦 **三大部署形态手册** | 单机一体化 (0依赖/本地自跑LLM)、纯网关、分布式集群操作与 K8s 范例 | [docs/deployment-modes.md](docs/deployment-modes.md) |

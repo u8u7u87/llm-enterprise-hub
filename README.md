@@ -47,7 +47,7 @@ flowchart TD
         Orch["Agent 编排框架 (LangChain / Spring AI / LlamaIndex)"]
     end
 
-    subgraph L2["【中枢：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub - 本项目)】"]
+    subgraph L2["【中枢：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub)】"]
         direction TB
         L2_1["统一 OpenAI 兼容接入 • 多租户鉴权 • 分布式 Token 租约预占 (Leasing)"]
         L2_2["双向全链路安全 (Prompt 注入主动防御 + 跨 Chunk 环形滑动脱敏 DLP)"]
@@ -66,9 +66,17 @@ flowchart TD
         DB["持久化与向量底座 (Milvus 2.x / Redis 7.x / SQLite 3.x WAL)"]
     end
 
-    L1 -->|"① 标准 OpenAI 协议 / SSE 流式 / 自定义租户头"| L2
-    L2 -->|"② 前缀哈希亲和 / 实时指标探测 / 故障降级"| L3
-    L2 -.->|"③ 状态快照持久化 / 稠密向量检索 / 租约控制"| L4
+    App -->|"① 标准 OpenAI 协议 / SSE 流式"| L2_1
+    UI -->|"① 标准 OpenAI 协议 / SSE 流式"| L2_1
+    Orch -->|"① 标准 OpenAI 协议 / SSE 流式"| L2_1
+
+    L2_3 -->|"② 前缀哈希亲和 / 实时指标探测"| Engines
+    L2_3 -->|"② 分布式算力调度"| Schedulers
+    L2_3 -->|"② 故障降级切流"| CloudSaaS
+
+    L2_1 -.->|"③ 分布式租约原子预占"| DB
+    L2_4 -.->|"③ 事务 Checkpoint 快照"| DB
+    L2_5 -.->|"③ 稠密向量余弦检索"| DB
 ```
 
 ### 1. 本项目所处的层级与核心定位
@@ -117,42 +125,22 @@ flowchart TD
 ## 🧩 核心能力体系全景
 
 ```mermaid
-mindmap
-  root((LLM Enterprise Hub))
-    流量与路由治理
-      Canary 百分比权重灰度切流
-      一致性哈希粘性会话 (Session / Tenant)
-      零侵入生产级异步影子流量镜像
-      虚拟模型别名与多级级联降级 (Fast / Reasoning)
-      低延迟首字投机对冲竞速路由 (Request Hedging)
-      K8s Headless DNS 拓扑动态自感知
-    精细化多租户与财务治理
-      分布式 Token 租约原子预占 (Token Leasing)
-      异步削峰写回批处理器 (消除数据库行锁)
-      双轨滑动窗口限流器 (RPM + TPM)
-      微美元财务成本精细核算与定价引擎
-      租户预算 80% 软告警与硬门禁
-    自主智能体 Harness 与长程状态机
-      事务 Checkpoint 快照与故障现场断点续跑
-      ReAct 循环流式事件透传 (Thought/Action/Observation)
-      多 Agent 协同工作流与工单分诊 (Swarm / Handoff)
-      Java 21 虚拟线程 Tool 并发执行
-      跨租户数据越权与高危动作守门人
-    全链路双向安全防护网
-      提示词注入深度语义与规则拦截
-      跨 Chunk 环形滑动窗口流式敏感词过滤
-      双向隐私脱敏保险库与透明反脱敏
-      动态脱敏规则热加载与自定义配置
-    知识增强与 RAG 工业级防御
-      多轮会话 Query 改写与意图消歧
-      Markdown 标题面包屑与表格感知分块
-      租户物理标量隔离与 Milvus 2.x 向量引擎
-      RAG 事实忠实度评估与幻觉主动阻断
-    高性能加速与可观测性
-      稠密向量级真实语义缓存 (Dense Vector Cache)
-      W3C TraceContext 全链路追踪 (traceparent)
-      Prometheus / Micrometer 企业级时序度量
-      零依赖内嵌现代 Web 运维监控大盘 (Tailwind + ECharts)
+flowchart LR
+    Hub["<b>LLM Enterprise Hub</b><br>核心能力体系"]
+
+    N1["<b>流量与路由治理</b><br>• Canary 百分比权重灰度切流<br>• 一致性哈希粘性会话 (Session/Tenant)<br>• 零侵入异步影子流量镜像<br>• 虚拟模型别名与多级级联降级<br>• 低延迟首字投机对冲竞速路由<br>• K8s Headless DNS 拓扑自感知"]
+    N2["<b>多租户与财务治理</b><br>• 分布式 Token 租约原子预占 (Leasing)<br>• 异步削峰写回批处理器 (消除行锁)<br>• 双轨滑动窗口限流器 (RPM + TPM)<br>• 微美元财务成本精细核算与定价<br>• 租户预算 80% 软告警与硬门禁"]
+    N3["<b>智能体 Harness 与状态机</b><br>• 事务 Checkpoint 快照与断点续跑<br>• ReAct 循环流式事件透传 (Thought/Action)<br>• 多 Agent 协同与工单分诊 (Swarm/Handoff)<br>• Java 21 虚拟线程 Tool 并发执行<br>• 跨租户数据越权与高危动作守门"]
+    N4["<b>全链路双向安全防护网</b><br>• 提示词注入深度语义与规则拦截<br>• 跨 Chunk 环形滑动窗口流式脱敏<br>• 双向隐私脱敏保险库与透明反脱敏<br>• 动态脱敏规则热加载与自定义配置"]
+    N5["<b>知识增强与 RAG 防御</b><br>• 多轮会话 Query 改写与意图消歧<br>• Markdown 标题面包屑与表格感知分块<br>• 租户标量物理隔离与 Milvus 2.x 向量库<br>• RAG 事实忠实度评估与幻觉主动阻断"]
+    N6["<b>高性能加速与可观测性</b><br>• 稠密向量级真实语义缓存 (Cosine)<br>• W3C TraceContext 全链路追踪<br>• Prometheus / Micrometer 时序度量<br>• 零依赖内嵌现代 Web 运维监控大盘"]
+
+    Hub --> N1
+    Hub --> N2
+    Hub --> N3
+    Hub --> N4
+    Hub --> N5
+    Hub --> N6
 ```
 
 > 详细架构说明与时序请参阅：[系统架构与模块设计 (docs/architecture.md)](docs/architecture.md)  

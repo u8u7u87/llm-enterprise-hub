@@ -36,7 +36,12 @@ flowchart TD
         A_Custom["CustomInferenceAdapter<br>(第三方自定义扩展: 仅需实现接口 + @Component)"]
     end
 
-    Registry --> A_Direct & A_vLLM & A_SGLang & A_Triton & A_Ray & A_Custom
+    Registry --> A_Direct
+    Registry --> A_vLLM
+    Registry --> A_SGLang
+    Registry --> A_Triton
+    Registry --> A_Ray
+    Registry --> A_Custom
 
     subgraph CoreHub["LLM Enterprise Hub 调度中枢"]
         ClusterMgr["RemoteClusterManager / FailoverRoutingService"]
@@ -46,7 +51,8 @@ flowchart TD
 
     Registry -->|提供最佳 LB 策略| LB
     Registry -->|提供专有探活与指标提取| Prober
-    LB & Prober --> ClusterMgr
+    LB --> ClusterMgr
+    Prober --> ClusterMgr
 ```
 
 ### 核心设计原则

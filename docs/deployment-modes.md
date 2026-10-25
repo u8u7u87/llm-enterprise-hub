@@ -44,10 +44,18 @@ flowchart TD
 
     subgraph S3["3. 分布式集群模式 (Distributed Multi-Pod)"]
         direction TB
-        M3_SLB(["负载均衡器 (K8s Ingress)"]) --> M3_P1["Hub Pod 1"] & M3_P2["Hub Pod 2"] & M3_P3["Hub Pod N"]
-        M3_P1 & M3_P2 & M3_P3 --> M3_Redis[("Redis 集群<br>(分布式 Token 租约)")]
-        M3_P1 & M3_P2 & M3_P3 --> M3_Milvus[("Milvus 2.x 集群")]
-        M3_P1 & M3_P2 & M3_P3 --> M3_GPU["GPU 算力集群 (vLLM / SGLang / Triton / Ray)"]
+        M3_SLB(["负载均衡器 (K8s Ingress)"]) --> M3_P1["Hub Pod 1"]
+        M3_SLB --> M3_P2["Hub Pod 2"]
+        M3_SLB --> M3_P3["Hub Pod N"]
+        M3_P1 --> M3_Redis[("Redis 集群<br>(分布式 Token 租约)")]
+        M3_P2 --> M3_Redis
+        M3_P3 --> M3_Redis
+        M3_P1 --> M3_Milvus[("Milvus 2.x 集群")]
+        M3_P2 --> M3_Milvus
+        M3_P3 --> M3_Milvus
+        M3_P1 --> M3_GPU["GPU 算力集群 (vLLM / SGLang / Triton / Ray)"]
+        M3_P2 --> M3_GPU
+        M3_P3 --> M3_GPU
     end
 ```
 

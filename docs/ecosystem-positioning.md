@@ -27,49 +27,53 @@ flowchart TD
         Framework2["企业级原生编排<br>(Spring AI / Semantic Kernel)"]
     end
 
-    subgraph L2["【第 2 层：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub - 本项目)】"]
+    subgraph L2["【第 2 层：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub)】"]
         direction TB
-        subgraph GatewayCore["核心管控与可靠性防线"]
-            Auth["多租户鉴权<br>& 财务 Token 租约预占"]
-            DLP["全链路双向安全防护<br>(Prompt 注入拦截 / 流式滑动脱敏)"]
-            Router["推理感知动态路由<br>(Canary 灰度 / 投机竞速 / 熔断降级)"]
-            Cache["稠密向量语义缓存<br>(Dense Vector Cosine)"]
-        end
-        subgraph HarnessCore["长程智能体与状态机"]
-            Harness["Agent Harness 状态机<br>(Checkpoint 快照 / 断点自愈)"]
-            ToolHub["@LlmTool 本地微服务方法注入<br>& Swarm 多智能体工单分诊"]
-        end
+        Auth["多租户鉴权 & 财务 Token 租约预占 (Leasing)"]
+        DLP["全链路双向安全防护 (Prompt 注入拦截 / 流式滑动脱敏)"]
+        Router["推理感知动态路由 (Canary 灰度 / 投机竞速 / 熔断降级)"]
+        Cache["稠密向量语义缓存 (Dense Vector Cosine)"]
+        Harness["Agent Harness 状态机 (Checkpoint 快照 / 断点自愈)"]
+        ToolHub["@LlmTool 本地微服务方法注入 & Swarm 多智能体工单分诊"]
     end
 
     subgraph L3["【第 3 层：算力调度与高性能推理引擎层 (Inference & Scheduling)】"]
         direction LR
-        subgraph LocalEngines["开源高性能推理引擎"]
-            vLLM["vLLM<br>(PagedAttention / APC)"]
-            SGLang["SGLang<br>(RadixAttention)"]
-            Triton["Triton Inference Server<br>(TensorRT-LLM)"]
-            CppEngines["llama.cpp / Ollama<br>(轻量单机 GGUF)"]
-        end
-        subgraph ClusterSchedulers["分布式算力调度与平台"]
-            Ray["Ray / Ray Serve<br>(分布式 Actor 调度)"]
-            K8s["Kubernetes + KEDA<br>(Pod 弹性伸缩 / Headless DNS)"]
-        end
-        subgraph CloudAPIs["商业闭源云端模型 SaaS"]
-            DeepSeek["DeepSeek-V3 / R1"]
-            OpenAI["OpenAI / Anthropic Claude"]
-            Qwen["阿里云百炼 / 通义千问 / 智谱 GLM"]
-        end
+        vLLM["vLLM (PagedAttention / APC)"]
+        SGLang["SGLang (RadixAttention)"]
+        Triton["Triton (TensorRT-LLM)"]
+        CppEngines["llama.cpp / Ollama (轻量单机 GGUF)"]
+        Ray["Ray / Ray Serve (分布式 Actor 调度)"]
+        K8s["Kubernetes + KEDA (Pod 弹性伸缩)"]
+        CloudAPIs["商业闭源云端模型 SaaS (DeepSeek / OpenAI / 阿里通义)"]
     end
 
     subgraph L4["【第 4 层：异构计算与数据持久层基建 (Hardware & Data Foundation)】"]
         direction LR
-        HW["GPU / NPU 算力集群<br>(NVIDIA H100/A100/4090, 昇腾 910B)"]
-        Storage["数据与向量基础设施<br>(Milvus 2.x, Redis 7.x, SQLite WAL)"]
+        HW["GPU / NPU 算力集群 (NVIDIA H100/A100/4090, 昇腾 910B)"]
+        Storage["数据与向量基础设施 (Milvus 2.x, Redis 7.x, SQLite WAL)"]
     end
 
-    L1 -->|"① 标准 OpenAI 协议 / SSE 流式 / 自定义租户头"| L2
-    L2 -->|"② 协议适配 / 前缀缓存亲和 / 实时排队探测"| L3
-    L3 -->|"③ 显卡驱动 / 张量并行 / KV Cache 硬件分配"| L4
-    L2 -.->|"状态恢复 / 向量检索"| Storage
+    App1 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
+    App2 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
+    Framework1 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
+    Framework2 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
+
+    Router -->|"② 协议适配 / 前缀缓存亲和"| vLLM
+    Router -->|"② 树状缓存亲和"| SGLang
+    Router -->|"② KServe v2 协议探针"| Triton
+    Router -->|"② 本地进程托管"| CppEngines
+    Router -->|"② Ingress 转发"| Ray
+    Router -->|"② 故障降级切流"| CloudAPIs
+
+    vLLM -->|"③ 显存分配"| HW
+    SGLang -->|"③ 显存分配"| HW
+    Triton -->|"③ 显存分配"| HW
+    Ray -->|"③ 异构计算"| HW
+
+    Auth -.->|"分布式租约"| Storage
+    Cache -.->|"向量余弦检索"| Storage
+    Harness -.->|"事务快照"| Storage
 ```
 
 ---
@@ -116,29 +120,34 @@ flowchart TD
 LLM Enterprise Hub 具备标准协议开放性与零侵入适配能力，在上游与下游均拥有丰富的生态配合对象：
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph Upstream["【上游生态 (Upstream)】"]
         direction TB
-        U1["业务客户端<br>• Open-WebUI<br>• NextChat / Chatbox<br>• 企业内部移动端/CRM"]
-        U2["Java 业务系统<br>• Spring Boot 3.x 业务微服务<br>• Dubbo / gRPC 业务集群"]
-        U3["AI 编排框架<br>• Spring AI<br>• LangChain (Python/Java)<br>• LlamaIndex / CrewAI"]
+        U1["业务客户端<br>(Open-WebUI / NextChat / 移动端)"]
+        U2["Java 业务系统<br>(Spring Boot / Dubbo 微服务)"]
+        U3["AI 编排框架<br>(Spring AI / LangChain / LlamaIndex)"]
     end
 
     subgraph Hub["【中枢治理 (LLM Enterprise Hub)】"]
         direction TB
-        HubNode["OpenAI 兼容协议端点<br>(/v1/chat/completions, /v1/embeddings)<br><b>Java 21 虚拟线程百万高并发引擎</b>"]
+        HubNode["OpenAI 兼容协议端点<br>(/v1/chat/completions, /v1/embeddings)<br><b>Java 21 虚拟线程并发中枢</b>"]
     end
 
     subgraph Downstream["【下游生态 (Downstream)】"]
         direction TB
-        D1["开源推理引擎<br>• vLLM (APC / PagedAttention)<br>• SGLang (RadixAttention)<br>• Triton + TensorRT-LLM<br>• llama.cpp / Ollama"]
-        D2["分布式算力底座<br>• Ray / Ray Serve<br>• K8s + KEDA Pod 编排"]
-        D3["商业云端模型<br>• DeepSeek, OpenAI, Claude<br>• 阿里通义, 智谱, 百度千帆"]
-        D4["存储与数据底座<br>• Milvus 2.x, Redis 7.x, SQLite"]
+        D1["开源推理引擎<br>(vLLM / SGLang / Triton / llama.cpp)"]
+        D2["分布式算力底座<br>(Ray / Ray Serve / K8s KEDA)"]
+        D3["商业云端模型<br>(DeepSeek / OpenAI / 阿里通义 / 智谱)"]
+        D4["存储与数据底座<br>(Milvus 2.x / Redis 7.x / SQLite)"]
     end
 
-    Upstream --> Hub
-    Hub --> Downstream
+    U1 --> HubNode
+    U2 --> HubNode
+    U3 --> HubNode
+    HubNode --> D1
+    HubNode --> D2
+    HubNode --> D3
+    HubNode --> D4
 ```
 
 ### 1. 上游对接标准（输入端）
@@ -165,11 +174,11 @@ graph LR
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as 上游: Spring AI / Open-WebUI
-    participant Hub as 中枢: LLM Enterprise Hub
-    participant Milvus as 基础: Milvus 向量库
-    participant Redis as 基础: Redis 租约
-    participant vLLM as 下游: vLLM 集群 (2+ Pods)
+    participant App as 上游客户端 (Spring AI / WebUI)
+    participant Hub as LLM Enterprise Hub
+    participant Milvus as Milvus 向量库
+    participant Redis as Redis 租约
+    participant vLLM as vLLM 推理集群
 
     App->>Hub: POST /v1/chat/completions (带 Prompt 与 Tenant Key)
     Note over Hub: 1. API Key 鉴权 & 滑动窗口限流 (RPM/TPM)
@@ -181,11 +190,11 @@ sequenceDiagram
         Milvus-->>Hub: 返回缓存回答
         Hub-->>App: 直接返回响应 (延迟 < 15ms)
     else 未命中缓存
-        Note over Hub: 5. 复合推理负载均衡 (InferenceAwareLoadBalancer)<br/>- 提取前缀哈希计算 APC 亲和<br/>- 检查各 Pod 等待队列与显存开销
+        Note over Hub: 5. 复合推理负载均衡 (InferenceAwareLoadBalancer)<br>- 提取前缀哈希计算 APC 亲和<br>- 检查各 Pod 等待队列与显存开销
         Hub->>vLLM: 6. 路由转发至最轻载且前缀命中的 vLLM 节点
         vLLM-->>Hub: 7. SSE 流式吐出 Token Chunks
         loop 跨 Chunk 流式脱敏
-            Note over Hub: 8. 环形滑动窗口识别敏感词/身份证/秘钥<br/>透明脱敏为假名
+            Note over Hub: 8. 环形滑动窗口识别敏感词/身份证/秘钥<br>透明脱敏为假名
         end
         Hub-->>App: 9. 干净合规的 SSE 增量内容输出
         vLLM-->>Hub: 10. 推理结束，携带实际 usage.total_tokens
@@ -202,7 +211,7 @@ sequenceDiagram
     autonumber
     participant User as 用户终端
     participant App as 业务系统 (Spring Boot)
-    participant Hub as LLM Enterprise Hub (Starter 内嵌)
+    participant Hub as LLM Enterprise Hub
     participant Engine as 下游推理后端 (vLLM / 云模型)
 
     User->>App: 发起复杂业务诉求 ("查询用户历史订单并办理退货")
@@ -225,7 +234,7 @@ sequenceDiagram
         Engine-->>Hub: 返回 ToolCall ("process_refund", {"orderId": "ORD-888"})
         Note over App: 假定此时网络抖动 / 依赖服务瞬态不可用
         Hub-->>App: 执行退款方法失败 (抛出异常)
-        Note over Hub: 触发 Agent Harness 自动容灾重试策略<br/>基于快照安全原地回滚/重试，无需从头重跑轮次 1
+        Note over Hub: 触发 Agent Harness 自动容灾重试策略<br>基于快照安全原地回滚/重试，无需从头重跑轮次 1
         Hub->>App: 幂等安全重试成功
         Hub->>Hub: Checkpoint 标记为 SUCCESS
     end

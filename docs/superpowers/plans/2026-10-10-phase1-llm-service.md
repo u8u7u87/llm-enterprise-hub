@@ -36,12 +36,12 @@ graph TD
 ### Task 1: Project Scaffolding & Maven Wrapper Setup
 
 **Files:**
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/pom.xml`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/mvnw`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/.mvn/wrapper/maven-wrapper.properties`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/resources/application.yml`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/LlmEnterpriseHubApplication.java`
-- Test: `/Users/soul/AiPro/llm-enterprise-hub/src/test/java/com/enterprise/llm/LlmEnterpriseHubApplicationTests.java`
+- Create: `pom.xml`
+- Create: `mvnw`
+- Create: `.mvn/wrapper/maven-wrapper.properties`
+- Create: `src/main/resources/application.yml`
+- Create: `src/main/java/com/enterprise/llm/LlmEnterpriseHubApplication.java`
+- Test: `src/test/java/com/enterprise/llm/LlmEnterpriseHubApplicationTests.java`
 
 - [x] **Step 1: Create `pom.xml` with Spring Boot 3, Java 21, and dependencies**
 
@@ -79,12 +79,12 @@ git commit -m "chore: initialize llm-enterprise-hub with Java 21 and Spring Boot
 ### Task 2: Standardized LLM Protocol Data Models & Error Handling
 
 **Files:**
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/model/ChatMessage.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/model/ChatCompletionRequest.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/model/ChatCompletionResponse.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/model/ChatCompletionChunk.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/model/Usage.java`
-- Test: `/Users/soul/AiPro/llm-enterprise-hub/src/test/java/com/enterprise/llm/model/ModelSerializationTest.java`
+- Create: `src/main/java/com/enterprise/llm/model/ChatMessage.java`
+- Create: `src/main/java/com/enterprise/llm/model/ChatCompletionRequest.java`
+- Create: `src/main/java/com/enterprise/llm/model/ChatCompletionResponse.java`
+- Create: `src/main/java/com/enterprise/llm/model/ChatCompletionChunk.java`
+- Create: `src/main/java/com/enterprise/llm/model/Usage.java`
+- Test: `src/test/java/com/enterprise/llm/model/ModelSerializationTest.java`
 
 - [x] **Step 1: Write serialization/deserialization unit test for OpenAI SSE chunks**
 
@@ -116,10 +116,10 @@ git commit -m "feat: add OpenAI compatible chat data models and serialization"
 ### Task 3: OpenAI-Compatible LLM Client & SSE Streaming Engine
 
 **Files:**
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/client/LlmClient.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/client/OpenAiCompatibleLlmClient.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/client/StreamCancellationHandle.java`
-- Test: `/Users/soul/AiPro/llm-enterprise-hub/src/test/java/com/enterprise/llm/client/OpenAiCompatibleLlmClientTest.java`
+- Create: `src/main/java/com/enterprise/llm/client/LlmClient.java`
+- Create: `src/main/java/com/enterprise/llm/client/OpenAiCompatibleLlmClient.java`
+- Create: `src/main/java/com/enterprise/llm/client/StreamCancellationHandle.java`
+- Test: `src/test/java/com/enterprise/llm/client/OpenAiCompatibleLlmClientTest.java`
 
 - [x] **Step 1: Write unit test using MockWebServer simulating SSE stream**
 
@@ -153,9 +153,9 @@ git commit -m "feat: implement OpenAiCompatibleLlmClient with streaming and canc
 ### Task 6: SSE Controller with Client-Abort Cancellation (Backpressure)
 
 **Files:**
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/service/ChatExecutionService.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/controller/ChatCompletionController.java`
-- Test: `/Users/soul/AiPro/llm-enterprise-hub/src/test/java/com/enterprise/llm/controller/ChatCompletionControllerTest.java`
+- Create: `src/main/java/com/enterprise/llm/service/ChatExecutionService.java`
+- Create: `src/main/java/com/enterprise/llm/controller/ChatCompletionController.java`
+- Test: `src/test/java/com/enterprise/llm/controller/ChatCompletionControllerTest.java`
 
 - [x] **Step 1: Write integration test for SSE endpoint and disconnect handling**
 
@@ -189,11 +189,11 @@ git commit -m "feat: add SSE chat completions controller with client-abort cance
 ### Task 5: LLM Tracing & Metric Span Collection (TTFT, TPS, Langfuse-compatible)
 
 **Files:**
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/trace/TraceContext.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/trace/LlmSpan.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/trace/TraceCollector.java`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/main/java/com/enterprise/llm/trace/LangfuseTraceExporter.java`
-- Test: `/Users/soul/AiPro/llm-enterprise-hub/src/test/java/com/enterprise/llm/trace/LlmTracingTest.java`
+- Create: `src/main/java/com/enterprise/llm/trace/TraceContext.java`
+- Create: `src/main/java/com/enterprise/llm/trace/LlmSpan.java`
+- Create: `src/main/java/com/enterprise/llm/trace/TraceCollector.java`
+- Create: `src/main/java/com/enterprise/llm/trace/LangfuseTraceExporter.java`
+- Test: `src/test/java/com/enterprise/llm/trace/LlmTracingTest.java`
 
 - [x] **Step 1: Write test for calculating TTFT (Time-To-First-Token) and recording generation metrics**
 
@@ -226,8 +226,8 @@ git commit -m "feat: add LLM tracing with TTFT and token metrics collection"
 ### Task 6: End-to-End Verification & Documentation
 
 **Files:**
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/README.md`
-- Create: `/Users/soul/AiPro/llm-enterprise-hub/src/test/java/com/enterprise/llm/e2e/ChatStreamingE2ETest.java`
+- Create: `README.md`
+- Create: `src/test/java/com/enterprise/llm/e2e/ChatStreamingE2ETest.java`
 
 - [x] **Step 1: Write comprehensive End-to-End test suite**
 

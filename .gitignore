@@ -28,6 +28,27 @@ target/
 ### macOS ###
 .DS_Store
 
-### SQLite Databases ###
+### SQLite Databases & WAL ###
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+
+### Local Environment & Secrets ###
+.env
+.env.*
+*.local
+application-local.yml
+application-prod.yml
+
+### Logs & Dumps ###
+*.log
+logs/
+*.hprof
+
+### Keys & Certificates ###
+*.pem
+*.key
+*.crt
+*.p12
+*.jks

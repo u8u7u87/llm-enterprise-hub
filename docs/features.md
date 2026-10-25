@@ -165,7 +165,7 @@
 - 支持 `v1`、`v2`、`latest` 多版本隔离；支持租户级专属模板覆盖，告别代码中硬编码 Prompt。
 
 ### 9.2 严格变量完整性校验
-- 声明 `requiredVariables` 必填清单，渲染前进行完整性检查；若有缺失立即抛出明确的 [`MissingTemplateVariableException`](file:///Users/soul/AiPro/llm-enterprise-hub/llm-enterprise-core/src/main/java/com/enterprise/llm/template/MissingTemplateVariableException.java)，防止带占位符污染大模型输入。
+- 声明 `requiredVariables` 必填清单，渲染前进行完整性检查；若有缺失立即抛出明确的 [`MissingTemplateVariableException`](../llm-enterprise-core/src/main/java/com/enterprise/llm/template/MissingTemplateVariableException.java)，防止带占位符污染大模型输入。
 
 ---
 

@@ -7,7 +7,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46%20(WAL)-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-289%2B%20Passed%20(100%25)-success)](#-自动化测试与工程指标)
+[![Tests](https://img.shields.io/badge/Tests-295%2B%20Passed%20(100%25)-success)](#-自动化测试与工程指标)
 [![Protocol](https://img.shields.io/badge/Protocol-OpenAI%20Compatible-black)](docs/api-reference.md)
 
 <p align="center">
@@ -16,7 +16,7 @@
   既可作为<b>独立高性能网关</b>开箱即用，亦可作为 <b>Spring Boot Starter</b> 深度内嵌于企业已有微服务中。
 </p>
 
-[快速开始](#-新手极速接入-quick-start) • [同类竞品对比](#-同类主流开源竞品深度对比) • [核心能力矩阵](#-核心能力体系全景) • [系统架构设计](docs/architecture.md) • [多推理后端适配](docs/pluggable-inference-backend.md) • [API 接入参考](docs/api-reference.md) • [配置字典](docs/configuration.md)
+[快速开始](#-新手极速接入-quick-start) • [同类竞品对比](#-同类主流开源竞品深度对比) • [核心能力矩阵](#-核心能力体系全景) • [系统架构设计](docs/architecture.md) • [三大部署形态](docs/deployment-modes.md) • [多推理后端适配](docs/pluggable-inference-backend.md) • [API 接入参考](docs/api-reference.md) • [配置字典](docs/configuration.md)
 
 </div>
 
@@ -260,6 +260,7 @@ llm-enterprise-hub/
 | :--- | :--- | :--- |
 | 🏛 **系统架构设计** | 4 阶段请求拓扑、5 大模块职责、时序图、Java 21 虚拟线程并发模型 | [docs/architecture.md](docs/architecture.md) |
 | ⚡ **核心特性剖析** | 35+ 项深度企业特性拆解：Canary 灰度、Token 租约、Swarm 协同、流式滑动脱敏 | [docs/features.md](docs/features.md) |
+| 📦 **三大部署形态手册** | 单机一体化 (0依赖/本地自跑LLM)、纯网关、分布式集群操作与 K8s 范例 | [docs/deployment-modes.md](docs/deployment-modes.md) |
 | 🚀 **多推理后端适配** | 配置选择无框架模式 (DIRECT) 或 Ray、vLLM、Triton、SGLang 及自定义扩展 | [docs/pluggable-inference-backend.md](docs/pluggable-inference-backend.md) |
 | 🔌 **API 接入参考** | OpenAI 同步/流式协议、RAG 上传检索、Agent 状态机断点续跑、Admin 运维接口与 cURL 范例 | [docs/api-reference.md](docs/api-reference.md) |
 | ⚙️ **配置完全指南** | 完整 `application.yml` 参数字典、环境变量映射表、JVM 虚拟线程与 SQLite 生产调优指南 | [docs/configuration.md](docs/configuration.md) |
@@ -274,12 +275,12 @@ llm-enterprise-hub/
 [INFO] -------------------------------------------------------
 [INFO]  T E S T S   S U M M A R Y
 [INFO] -------------------------------------------------------
-[INFO] Tests run: 289, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 295, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 [INFO] -------------------------------------------------------
 ```
 
-- **测试用例数**：**289+ 全自动化测试**，测试通过率保持 **100%**；
+- **测试用例数**：**295+ 全自动化测试**，测试通过率保持 **100%**；
 - **测试覆盖维度**：
   - **核心单元覆盖**：滑动窗口限流、原子 Token 租约预占、双向隐私脱敏正则、向量余弦计算；
   - **状态机与容灾测试**：Agent Task 断点持久化与故障自愈还原、三态熔断器半开探测、投机竞速对冲；

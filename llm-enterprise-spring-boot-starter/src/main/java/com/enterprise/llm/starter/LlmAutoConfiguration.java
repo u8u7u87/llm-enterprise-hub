@@ -52,6 +52,8 @@ import com.enterprise.llm.backend.InferenceBackendAdapter;
 import com.enterprise.llm.backend.InferenceBackendProperties;
 import com.enterprise.llm.backend.InferenceBackendRegistry;
 import com.enterprise.llm.backend.adapter.*;
+import com.enterprise.llm.runner.EmbeddedLocalEngineSupervisor;
+import com.enterprise.llm.runner.EmbeddedRunnerProperties;
 import com.enterprise.llm.trace.TraceCollector;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -71,7 +73,8 @@ import org.springframework.context.annotation.Import;
         PromptSecurityProperties.class,
         DlpPolicyProperties.class,
         ToolPolicyProperties.class,
-        InferenceBackendProperties.class
+        InferenceBackendProperties.class,
+        EmbeddedRunnerProperties.class
 })
 public class LlmAutoConfiguration {
 
@@ -141,6 +144,12 @@ public class LlmAutoConfiguration {
             List<InferenceBackendAdapter> adapters
     ) {
         return new InferenceBackendRegistry(adapters, properties.getEngine());
+    }
+
+    @Bean(initMethod = "start", destroyMethod = "stop")
+    @ConditionalOnMissingBean(EmbeddedLocalEngineSupervisor.class)
+    public EmbeddedLocalEngineSupervisor embeddedLocalEngineSupervisor(EmbeddedRunnerProperties properties) {
+        return new EmbeddedLocalEngineSupervisor(properties);
     }
 
     @Bean

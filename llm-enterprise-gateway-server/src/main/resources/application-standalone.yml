@@ -1,0 +1,64 @@
+# ==============================================================================
+# LLM Enterprise Hub - 单机一体化模式 Profile (application-standalone.yml)
+# 适用场景：个人开发者环境、单机测试、边缘设备、完全断网局域网保密部署
+# 特点：零外部依赖 (0 Redis, 0 MySQL, 0 Milvus, 0 Python)，单 Jar 包直接自闭环运行
+# ==============================================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: llm-enterprise-hub-standalone
+  datasource:
+    url: jdbc:sqlite:hub-standalone.db   # 本地单机 SQLite 持久化
+    driver-class-name: org.sqlite.JDBC
+
+llm:
+  # 推理后端：direct 无框架独立模式
+  backend:
+    engine: "direct"
+
+  # 本地轻量级模型连接 (默认直连本地运行的轻量级 Ollama 或 llama-server)
+  provider:
+    base-url: "http://localhost:11434/v1"
+    api-key: "ollama"
+    model: "qwen2.5:0.5b"
+    timeout-seconds: 60
+  fallback:
+    base-url: "http://localhost:11434/v1"
+    api-key: "ollama"
+    model: "qwen2.5:0.5b"
+
+  # 单机可选：自动守护并拉起本地嵌入式 llama-server (若设为 true 则自动托管进程)
+  embedded-runner:
+    enabled: false
+    binary-path: "llama-server"
+    model-path: ""
+    port: 8081
+    gpu-layers: 0                        # 纯 CPU 模式
+
+  # 禁用集群多节点探测
+  cluster:
+    enabled: false
+
+# 向量库：设为 disabled 自动无缝降级为纯 Java 内存余弦向量检索 (无需安装部署 Milvus)
+milvus:
+  endpoint: "disabled"
+
+# 缓存：启用单机 L1 Exact Hash + L2 内存语义缓存
+cache:
+  enabled: true
+  ttl-seconds: 3600
+  semantic-threshold: 0.88
+  max-capacity: 5000
+
+# 安全护栏：全量开启单机 Prompt 防御与出站脱敏
+security:
+  guardrail:
+    prompt:
+      enabled: true
+  dlp:
+    enabled: true
+  tools:
+    enabled: true

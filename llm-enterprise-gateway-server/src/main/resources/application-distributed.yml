@@ -1,0 +1,72 @@
+# ==============================================================================
+# LLM Enterprise Hub - 企业分布式集群模式 Profile (application-distributed.yml)
+# 适用场景：K8s 多 Pod 部署、高并发企业级中台、对接自建 GPU 推理算力池 (vLLM / SGLang / Triton / Ray)
+# 特点：分布式 Token 租约限流、微批次异步削峰写回、K8s Headless DNS 动态自感知与背压过载防护
+# ==============================================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: llm-enterprise-hub-distributed
+  datasource:
+    url: "${SPRING_DATASOURCE_URL:jdbc:sqlite:hub-data.db}"
+    driver-class-name: org.sqlite.JDBC
+
+llm:
+  # 推理后端引擎选择：vllm (可切换为 sglang, triton, ray)
+  backend:
+    engine: "${LLM_BACKEND_ENGINE:vllm}"
+    max-waiting-requests: 25              # 节点等待排队超过 25 时触发背压降权
+    max-gpu-cache-usage: 0.95             # 显存利用率达 95% 时触发过载保护
+
+  # 远程 GPU 推理集群 K8s Headless DNS 自感知
+  cluster:
+    enabled: true
+    dns-discovery: "${LLM_CLUSTER_DNS_DISCOVERY:vllm-headless.ai-inference.svc.cluster.local:8000}"
+    discovery-interval-seconds: 15
+
+  # 本地紧急兜底兜底模型 (安全网)
+  fallback:
+    base-url: "http://localhost:11434/v1"
+    api-key: "ollama"
+    model: "qwen2.5:0.5b"
+
+  # 生产级配额治理与分布式并发控制
+  quota:
+    # 异步微批次削峰写回批处理器 (消除数据库同一租户行级锁互斥)
+    write-behind:
+      enabled: true
+      flush-interval-ms: 200
+      batch-size: 100
+
+    # 分布式 Token 租约限流 (Redis Lua 原子预占)
+    distributed:
+      enabled: true
+      redis-url: "${REDIS_URL:redis://localhost:6379}"
+
+# 分布式 Milvus 向量数据库集群
+milvus:
+  endpoint: "${MILVUS_ENDPOINT:http://milvus-standalone:19530}"
+  collection: "enterprise_hub_rag"
+  api-key: "${MILVUS_API_KEY:}"
+
+cache:
+  enabled: true
+  ttl-seconds: 7200
+  semantic-threshold: 0.88
+  max-capacity: 50000
+
+security:
+  guardrail:
+    prompt:
+      enabled: true
+  dlp:
+    enabled: true
+  tools:
+    enabled: true
+    tenant-isolation-enabled: true
+  streaming:
+    mode: "BLOCK"
+    overlap-size: 64

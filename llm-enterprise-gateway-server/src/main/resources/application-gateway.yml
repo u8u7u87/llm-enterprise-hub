@@ -1,0 +1,56 @@
+# ==============================================================================
+# LLM Enterprise Hub - 纯企业级网关模式 Profile (application-gateway.yml)
+# 适用场景：企业统一调用公有云/商用 API (DeepSeek, 阿里云通义千问, OpenAI, 智谱, Moonshot)
+# 特点：无需自建任何大模型算力，专注于多租户 Token 预算、防注入、跨 Chunk 脱敏与 Agent 编排
+# ==============================================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: llm-enterprise-hub-gateway
+  datasource:
+    url: jdbc:sqlite:hub-gateway.db
+    driver-class-name: org.sqlite.JDBC
+
+llm:
+  # 推理后端：direct 无框架直连模式
+  backend:
+    engine: "direct"
+
+  # 主推商业公有云 API (支持以环境变量覆盖: LLM_PROVIDER_BASE_URL, LLM_PROVIDER_API_KEY)
+  provider:
+    base-url: "https://api.deepseek.com/v1"
+    api-key: "${DEEPSEEK_API_KEY:sk-placeholder-key}"
+    model: "deepseek-chat"
+    timeout-seconds: 120
+
+  # 商业云灾备降级线路 (备用通义千问或备用模型)
+  fallback:
+    base-url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api-key: "${QWEN_API_KEY:sk-placeholder-key}"
+    model: "qwen-plus"
+
+  # 启用网络抖动自适应退避重试
+  resilience:
+    max-rate-limit-retries: 3
+    backoff-base-ms: 200
+
+# 向量库配置 (可选对接自建 Milvus 或保持 disabled)
+milvus:
+  endpoint: "${MILVUS_ENDPOINT:disabled}"
+
+# 财务与全局限流默认值
+admin:
+  secret-key: "${ADMIN_SECRET_KEY:enterprise-admin-secret-key-8848}"
+
+security:
+  guardrail:
+    prompt:
+      enabled: true
+  dlp:
+    enabled: true
+  tools:
+    enabled: true
+    tenant-isolation-enabled: true

@@ -40,43 +40,77 @@
 为了让开发者与架构师准确把握系统定位，下图展示了 **LLM Enterprise Hub** 在现代企业级大模型在线服务全景体系中所处的宏观层级与端到端协作拓扑：
 
 ```mermaid
-flowchart TD
-    subgraph L1["【上游：业务应用与智能体编排层 (Client & Agent Orchestration)】"]
-        App["企业微服务群 (Spring Boot / Java)"]
-        UI["前端与客户端 (Open-WebUI / NextChat)"]
-        Orch["Agent 编排框架 (LangChain / Spring AI / LlamaIndex)"]
-    end
+flowchart LR
+    %% 全局主题样式定义 (Modern Tech Color Palette)
+    classDef clientStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef hubHeader fill:#e0e7ff,stroke:#4338ca,stroke-width:2px,color:#1e1b4b;
+    classDef hubCard fill:#ffffff,stroke:#6366f1,stroke-width:1.5px,color:#312e81;
+    classDef computeStyle fill:#eff6ff,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+    classDef cloudStyle fill:#fdf4ff,stroke:#c026d3,stroke-width:1.5px,color:#701a75;
+    classDef storageStyle fill:#fffbeb,stroke:#d97706,stroke-width:1.5px,color:#78350f;
 
-    subgraph L2["【中枢：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub)】"]
+    %% 1. 上游应用与编排层
+    subgraph UPSTREAM[" 📱 上游：业务消费与智能体编排层 "]
         direction TB
-        L2_1["统一 OpenAI 兼容接入 • 多租户鉴权 • 分布式 Token 租约预占 (Leasing)"]
-        L2_2["双向全链路安全 (Prompt 注入主动防御 + 跨 Chunk 环形滑动脱敏 DLP)"]
-        L2_3["推理感知复合调度 (InferenceAwareLB 前缀缓存亲和 + 排队/显存感知)"]
-        L2_4["长程 Agent Harness 状态机 (事务 Checkpoint 断点自愈 + 本地微服务 @LlmTool 注入)"]
-        L2_5["L1 精确哈希 + L2 稠密向量语义缓存 (Dense Vector Cache)"]
+        U_APP["🏢 <b>企业业务微服务群</b><br><code>Spring Boot / Cloud / Java</code>"]:::clientStyle
+        U_AGENT["🤖 <b>Agent 智能编排框架</b><br><code>LangChain / Spring AI / LlamaIndex</code>"]:::clientStyle
+        U_UI["💻 <b>终端与前端交互界面</b><br><code>Open-WebUI / NextChat / 移动端</code>"]:::clientStyle
     end
 
-    subgraph L3["【下游：算力调度平台与高性能推理后端 (Inference & Scheduling)】"]
-        Engines["私有高性能推理引擎 (vLLM / SGLang / Triton / llama.cpp)"]
-        Schedulers["分布式算力调度平台 (Ray / Ray Serve / K8s + Keda)"]
-        CloudSaaS["商业闭源云端模型 (DeepSeek / OpenAI / 阿里通义 / 智谱)"]
+    %% 2. 中枢：LLM Enterprise Hub
+    subgraph HUB[" 🏛️ 中枢：LLM Enterprise Hub (企业级智能网关 & Agent 治理中枢) "]
+        direction TB
+        GATEWAY_INGRESS["<b>OpenAI 兼容协议接入中枢</b><br><code>/v1/chat/completions • /v1/embeddings • SSE 流式引擎</code>"]:::hubHeader
+
+        subgraph HUB_PILLARS["核心管控与可靠性四维矩阵"]
+            direction LR
+            H1["🔑 <b>租户与财务治理</b><br>• 多租户 API-Key 鉴权<br>• 分布式 Token 租约预占<br>• 异步削峰写回 (消除行锁)"]:::hubCard
+            H2["🛡️ <b>全链路双向安全</b><br>• Prompt 注入语义拦截<br>• 跨 Chunk 环形滑动脱敏<br>• 隐私脱敏保险库 (De-mask)"]:::hubCard
+            H3["🎯 <b>推理感知路由</b><br>• 前缀缓存亲和 (APC)<br>• 实时排队/显存感知调度<br>• 稠密向量余弦语义缓存"]:::hubCard
+            H4["🤖 <b>智能体 Harness</b><br>• 事务 Checkpoint 断点自愈<br>• 本地微服务 @LlmTool 注入<br>• Swarm 多智能体工单分诊"]:::hubCard
+        end
+        
+        GATEWAY_INGRESS --> H1 & H2 & H3 & H4
     end
 
-    subgraph L4["【基础：存储与数据基础设施 (Hardware & Data Foundation)】"]
-        DB["持久化与向量底座 (Milvus 2.x / Redis 7.x / SQLite 3.x WAL)"]
+    %% 3. 下游算力调度与推理集群
+    subgraph DOWNSTREAM[" 🚀 下游：算力调度与推理后端 "]
+        direction TB
+        subgraph CLUSTER["开源私有推理集群 (Local Compute)"]
+            D_VLLM["⚡ <b>vLLM 集群</b><br><code>PagedAttention / APC 缓存</code>"]:::computeStyle
+            D_SGLANG["🚀 <b>SGLang 集群</b><br><code>RadixAttention 树状缓存</code>"]:::computeStyle
+            D_TRITON["🏢 <b>Triton / TensorRT</b><br><code>KServe v2 协议探活</code>"]:::computeStyle
+            D_LOCAL["📦 <b>本地轻量进程</b><br><code>llama-server / Ollama 托管</code>"]:::computeStyle
+        end
+        subgraph CLOUD_RAY["分布式与商业云模型 (Cloud & Ray)"]
+            D_RAY["🌐 <b>Ray / Ray Serve</b><br><code>分布式 Actor 弹性算力池</code>"]:::computeStyle
+            D_CLOUD["☁️ <b>商业云端大模型</b><br><code>DeepSeek / OpenAI / 阿里通义</code>"]:::cloudStyle
+        end
     end
 
-    App -->|"① 标准 OpenAI 协议 / SSE 流式"| L2_1
-    UI -->|"① 标准 OpenAI 协议 / SSE 流式"| L2_1
-    Orch -->|"① 标准 OpenAI 协议 / SSE 流式"| L2_1
+    %% 4. 数据与基础设施
+    subgraph STORAGE[" 💾 存储与数据基础设施 "]
+        direction TB
+        S_MILVUS[("🗄️ <b>Milvus 2.x</b><br>稠密向量语义缓存")]:::storageStyle
+        S_REDIS[("⚡ <b>Redis 7.x</b><br>原子分布式 Token 租约")]:::storageStyle
+        S_SQLITE[("💾 <b>SQLite 3.x WAL</b><br>Agent 任务快照持久化")]:::storageStyle
+    end
 
-    L2_3 -->|"② 前缀哈希亲和 / 实时指标探测"| Engines
-    L2_3 -->|"② 分布式算力调度"| Schedulers
-    L2_3 -->|"② 故障降级切流"| CloudSaaS
+    %% 数据流向连接 (显式节点连线，保障 100% 渲染兼容)
+    U_APP ==>|"① 标准 OpenAI 协议"| GATEWAY_INGRESS
+    U_AGENT ==>|"① 流式 SSE 调用"| GATEWAY_INGRESS
+    U_UI ==>|"① API-Key 鉴权调用"| GATEWAY_INGRESS
 
-    L2_1 -.->|"③ 分布式租约原子预占"| DB
-    L2_4 -.->|"③ 事务 Checkpoint 快照"| DB
-    L2_5 -.->|"③ 稠密向量余弦检索"| DB
+    H3 ==>|"② 前缀亲和命中"| D_VLLM
+    H3 ==>|"② 树状缓存路由"| D_SGLANG
+    H3 ==>|"② 高并发请求代理"| D_TRITON
+    H3 ==>|"② 自动化拉起管控"| D_LOCAL
+    H3 -.->|"② 分布式 Ingress"| D_RAY
+    H3 -.->|"② 故障熔断降级"| D_CLOUD
+
+    H1 -.->|"③ Lua 脚本原子预占"| S_REDIS
+    H3 -.->|"③ 毫秒级余弦相似度检索"| S_MILVUS
+    H4 -.->|"③ 事务级状态 Checkpoint"| S_SQLITE
 ```
 
 ### 1. 本项目所处的层级与核心定位
@@ -125,22 +159,42 @@ flowchart TD
 ## 🧩 核心能力体系全景
 
 ```mermaid
-flowchart LR
-    Hub["<b>LLM Enterprise Hub</b><br>核心能力体系"]
-
-    N1["<b>流量与路由治理</b><br>• Canary 百分比权重灰度切流<br>• 一致性哈希粘性会话 (Session/Tenant)<br>• 零侵入异步影子流量镜像<br>• 虚拟模型别名与多级级联降级<br>• 低延迟首字投机对冲竞速路由<br>• K8s Headless DNS 拓扑自感知"]
-    N2["<b>多租户与财务治理</b><br>• 分布式 Token 租约原子预占 (Leasing)<br>• 异步削峰写回批处理器 (消除行锁)<br>• 双轨滑动窗口限流器 (RPM + TPM)<br>• 微美元财务成本精细核算与定价<br>• 租户预算 80% 软告警与硬门禁"]
-    N3["<b>智能体 Harness 与状态机</b><br>• 事务 Checkpoint 快照与断点续跑<br>• ReAct 循环流式事件透传 (Thought/Action)<br>• 多 Agent 协同与工单分诊 (Swarm/Handoff)<br>• Java 21 虚拟线程 Tool 并发执行<br>• 跨租户数据越权与高危动作守门"]
-    N4["<b>全链路双向安全防护网</b><br>• 提示词注入深度语义与规则拦截<br>• 跨 Chunk 环形滑动窗口流式脱敏<br>• 双向隐私脱敏保险库与透明反脱敏<br>• 动态脱敏规则热加载与自定义配置"]
-    N5["<b>知识增强与 RAG 防御</b><br>• 多轮会话 Query 改写与意图消歧<br>• Markdown 标题面包屑与表格感知分块<br>• 租户标量物理隔离与 Milvus 2.x 向量库<br>• RAG 事实忠实度评估与幻觉主动阻断"]
-    N6["<b>高性能加速与可观测性</b><br>• 稠密向量级真实语义缓存 (Cosine)<br>• W3C TraceContext 全链路追踪<br>• Prometheus / Micrometer 时序度量<br>• 零依赖内嵌现代 Web 运维监控大盘"]
-
-    Hub --> N1
-    Hub --> N2
-    Hub --> N3
-    Hub --> N4
-    Hub --> N5
-    Hub --> N6
+mindmap
+  root((LLM Enterprise Hub))
+    流量与路由治理
+      Canary 百分比权重灰度切流
+      一致性哈希粘性会话 (Session / Tenant)
+      零侵入生产级异步影子流量镜像
+      虚拟模型别名与多级级联降级 (Fast / Reasoning)
+      低延迟首字投机对冲竞速路由 (Request Hedging)
+      K8s Headless DNS 拓扑动态自感知
+    精细化多租户与财务治理
+      分布式 Token 租约原子预占 (Token Leasing)
+      异步削峰写回批处理器 (消除数据库行锁)
+      双轨滑动窗口限流器 (RPM + TPM)
+      微美元财务成本精细核算与定价引擎
+      租户预算 80% 软告警与硬门禁
+    自主智能体 Harness 与长程状态机
+      事务 Checkpoint 快照与故障现场断点续跑
+      ReAct 循环流式事件透传 (Thought/Action/Observation)
+      多 Agent 协同工作流与工单分诊 (Swarm / Handoff)
+      Java 21 虚拟线程 Tool 并发执行
+      跨租户数据越权与高危动作守门人
+    全链路双向安全防护网
+      提示词注入深度语义与规则拦截
+      跨 Chunk 环形滑动窗口流式敏感词过滤
+      双向隐私脱敏保险库与透明反脱敏
+      动态脱敏规则热加载与自定义配置
+    知识增强与 RAG 工业级防御
+      多轮会话 Query 改写与意图消歧
+      Markdown 标题面包屑与表格感知分块
+      租户物理标量隔离与 Milvus 2.x 向量引擎
+      RAG 事实忠实度评估与幻觉主动阻断
+    高性能加速与可观测性
+      稠密向量级真实语义缓存 (Dense Vector Cache)
+      W3C TraceContext 全链路追踪 (traceparent)
+      Prometheus / Micrometer 企业级时序度量
+      零依赖内嵌现代 Web 运维监控大盘 (Tailwind + ECharts)
 ```
 
 > 详细架构说明与时序请参阅：[系统架构与模块设计 (docs/architecture.md)](docs/architecture.md)  

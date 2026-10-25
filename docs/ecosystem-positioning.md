@@ -18,62 +18,82 @@
 在大模型从「单机实验/Prompt 调用」走向「大规模生产落地」的演进历程中，现代企业级 AI 在线服务体系已经沉淀出清晰的 **四层解耦架构**：
 
 ```mermaid
-flowchart TD
-    subgraph L1["【第 1 层：业务应用与智能体编排层 (Client & Agent Orchestration)】"]
-        direction LR
-        App1["企业微服务业务系统<br>(Spring Cloud / Dubbo / Java)"]
-        App2["客户端 / Web 界面<br>(Open-WebUI / NextChat / 移动端)"]
-        Framework1["Agent 编排框架<br>(LangChain / LlamaIndex)"]
-        Framework2["企业级原生编排<br>(Spring AI / Semantic Kernel)"]
-    end
+flowchart LR
+    %% 全局主题样式定义 (Modern Tech Color Palette)
+    classDef clientStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef hubHeader fill:#e0e7ff,stroke:#4338ca,stroke-width:2px,color:#1e1b4b;
+    classDef hubCard fill:#ffffff,stroke:#6366f1,stroke-width:1.5px,color:#312e81;
+    classDef computeStyle fill:#eff6ff,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+    classDef cloudStyle fill:#fdf4ff,stroke:#c026d3,stroke-width:1.5px,color:#701a75;
+    classDef storageStyle fill:#fffbeb,stroke:#d97706,stroke-width:1.5px,color:#78350f;
 
-    subgraph L2["【第 2 层：企业级智能网关与 Agent 治理中枢 (LLM Enterprise Hub)】"]
+    %% 1. 上游应用与编排层
+    subgraph UPSTREAM[" 📱 上游：业务消费与智能体编排层 (Client & Orchestration) "]
         direction TB
-        Auth["多租户鉴权 & 财务 Token 租约预占 (Leasing)"]
-        DLP["全链路双向安全防护 (Prompt 注入拦截 / 流式滑动脱敏)"]
-        Router["推理感知动态路由 (Canary 灰度 / 投机竞速 / 熔断降级)"]
-        Cache["稠密向量语义缓存 (Dense Vector Cosine)"]
-        Harness["Agent Harness 状态机 (Checkpoint 快照 / 断点自愈)"]
-        ToolHub["@LlmTool 本地微服务方法注入 & Swarm 多智能体工单分诊"]
+        App1["🏢 <b>企业业务微服务群</b><br><code>Spring Boot / Cloud / Java</code>"]:::clientStyle
+        App2["💻 <b>终端交互客户端</b><br><code>Open-WebUI / NextChat / 移动端</code>"]:::clientStyle
+        Framework1["🤖 <b>Agent 编排框架</b><br><code>LangChain / LlamaIndex</code>"]:::clientStyle
+        Framework2["☕ <b>原生 Java 框架</b><br><code>Spring AI / Semantic Kernel</code>"]:::clientStyle
     end
 
-    subgraph L3["【第 3 层：算力调度与高性能推理引擎层 (Inference & Scheduling)】"]
-        direction LR
-        vLLM["vLLM (PagedAttention / APC)"]
-        SGLang["SGLang (RadixAttention)"]
-        Triton["Triton (TensorRT-LLM)"]
-        CppEngines["llama.cpp / Ollama (轻量单机 GGUF)"]
-        Ray["Ray / Ray Serve (分布式 Actor 调度)"]
-        K8s["Kubernetes + KEDA (Pod 弹性伸缩)"]
-        CloudAPIs["商业闭源云端模型 SaaS (DeepSeek / OpenAI / 阿里通义)"]
+    %% 2. 中枢：LLM Enterprise Hub
+    subgraph HUB[" 🏛️ 中枢：LLM Enterprise Hub (企业级智能网关 & Agent 治理中枢) "]
+        direction TB
+        GATEWAY_INGRESS["<b>OpenAI 兼容协议接入中枢</b><br><code>/v1/chat/completions • /v1/embeddings • SSE 流式引擎</code>"]:::hubHeader
+
+        subgraph HUB_PILLARS["核心管控与可靠性四维矩阵"]
+            direction LR
+            H1["🔑 <b>租户与财务治理</b><br>• 多租户 API-Key 鉴权<br>• 分布式 Token 租约预占<br>• 异步削峰写回 (消除行锁)"]:::hubCard
+            H2["🛡️ <b>全链路双向安全</b><br>• Prompt 注入语义拦截<br>• 跨 Chunk 环形滑动脱敏<br>• 隐私脱敏保险库 (De-mask)"]:::hubCard
+            H3["🎯 <b>推理感知路由</b><br>• 前缀缓存亲和 (APC)<br>• 实时排队/显存感知调度<br>• 稠密向量余弦语义缓存"]:::hubCard
+            H4["🤖 <b>智能体 Harness</b><br>• 事务 Checkpoint 断点自愈<br>• 本地微服务 @LlmTool 注入<br>• Swarm 多智能体工单分诊"]:::hubCard
+        end
+        
+        GATEWAY_INGRESS --> H1 & H2 & H3 & H4
     end
 
-    subgraph L4["【第 4 层：异构计算与数据持久层基建 (Hardware & Data Foundation)】"]
-        direction LR
-        HW["GPU / NPU 算力集群 (NVIDIA H100/A100/4090, 昇腾 910B)"]
-        Storage["数据与向量基础设施 (Milvus 2.x, Redis 7.x, SQLite WAL)"]
+    %% 3. 下游算力调度与推理集群
+    subgraph DOWNSTREAM[" 🚀 下游：算力调度与推理后端 (Inference & Scheduling) "]
+        direction TB
+        subgraph CLUSTER["开源私有推理集群 (Local Compute)"]
+            vLLM["⚡ <b>vLLM 集群</b><br><code>PagedAttention / APC 缓存</code>"]:::computeStyle
+            SGLang["🚀 <b>SGLang 集群</b><br><code>RadixAttention 树状缓存</code>"]:::computeStyle
+            Triton["🏢 <b>Triton / TensorRT</b><br><code>KServe v2 协议探活</code>"]:::computeStyle
+            CppEngines["📦 <b>本地轻量进程</b><br><code>llama-server / Ollama 托管</code>"]:::computeStyle
+        end
+        subgraph CLOUD_RAY["分布式算力与商业云模型 (Cloud & Ray)"]
+            Ray["🌐 <b>Ray / Ray Serve</b><br><code>分布式 Actor 弹性算力池</code>"]:::computeStyle
+            K8s["☸️ <b>Kubernetes + KEDA</b><br><code>Pod 弹性伸缩 / Headless DNS</code>"]:::computeStyle
+            CloudAPIs["☁️ <b>商业云端大模型</b><br><code>DeepSeek / OpenAI / 阿里通义</code>"]:::cloudStyle
+        end
     end
 
-    App1 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
-    App2 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
-    Framework1 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
-    Framework2 -->|"① 标准 OpenAI 协议 / SSE 流式"| Auth
+    %% 4. 数据与基础设施
+    subgraph STORAGE[" 💾 存储与数据基础设施 (Hardware & Data Foundation) "]
+        direction TB
+        Storage_Milvus[("🗄️ <b>Milvus 2.x</b><br>稠密向量语义缓存")]:::storageStyle
+        Storage_Redis[("⚡ <b>Redis 7.x</b><br>原子分布式 Token 租约")]:::storageStyle
+        Storage_Sqlite[("💾 <b>SQLite 3.x WAL</b><br>Agent 任务快照持久化")]:::storageStyle
+        Storage_HW["🖥️ <b>异构 GPU/NPU 硬件池</b><br><code>H100 / A100 / 4090 / 昇腾 910B</code>"]:::storageStyle
+    end
 
-    Router -->|"② 协议适配 / 前缀缓存亲和"| vLLM
-    Router -->|"② 树状缓存亲和"| SGLang
-    Router -->|"② KServe v2 协议探针"| Triton
-    Router -->|"② 本地进程托管"| CppEngines
-    Router -->|"② Ingress 转发"| Ray
-    Router -->|"② 故障降级切流"| CloudAPIs
+    %% 数据流向连接 (显式节点连线，保障 100% 渲染兼容)
+    App1 ==>|"① 标准 OpenAI 协议"| GATEWAY_INGRESS
+    App2 ==>|"① 客户端 SSE 交互"| GATEWAY_INGRESS
+    Framework1 ==>|"① Agent 循环补全"| GATEWAY_INGRESS
+    Framework2 ==>|"① Spring AI 原生调用"| GATEWAY_INGRESS
 
-    vLLM -->|"③ 显存分配"| HW
-    SGLang -->|"③ 显存分配"| HW
-    Triton -->|"③ 显存分配"| HW
-    Ray -->|"③ 异构计算"| HW
+    H3 ==>|"② 前缀亲和命中"| vLLM
+    H3 ==>|"② 树状缓存路由"| SGLang
+    H3 ==>|"② 高并发请求代理"| Triton
+    H3 ==>|"② 进程自动拉起"| CppEngines
+    H3 -.->|"② 分布式 Ingress"| Ray
+    H3 -.->|"② 故障熔断降级"| CloudAPIs
 
-    Auth -.->|"分布式租约"| Storage
-    Cache -.->|"向量余弦检索"| Storage
-    Harness -.->|"事务快照"| Storage
+    vLLM & SGLang & Triton -.->|"算力硬件分配"| Storage_HW
+    H1 -.->|"③ Lua 脚本原子预占"| Storage_Redis
+    H3 -.->|"③ 毫秒级余弦相似度检索"| Storage_Milvus
+    H4 -.->|"③ 事务级状态 Checkpoint"| Storage_Sqlite
 ```
 
 ---

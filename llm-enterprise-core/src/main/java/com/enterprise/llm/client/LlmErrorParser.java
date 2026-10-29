@@ -1,18 +1,26 @@
 package com.enterprise.llm.client;
 
-import com.enterprise.llm.exception.*;
+import java.net.http.HttpHeaders;
+import java.util.Optional;
+import com.enterprise.llm.exception.LlmAuthenticationException;
+import com.enterprise.llm.exception.LlmContentFilterException;
+import com.enterprise.llm.exception.LlmContextLengthExceededException;
+import com.enterprise.llm.exception.LlmException;
+import com.enterprise.llm.exception.LlmInvalidRequestException;
+import com.enterprise.llm.exception.LlmRateLimitException;
+import com.enterprise.llm.exception.LlmServerException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.http.HttpHeaders;
-import java.util.Optional;
-
 public class LlmErrorParser {
 
     private static final Logger log = LoggerFactory.getLogger(LlmErrorParser.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** 上游未给出可用退避提示时的默认重试间隔。 */
+    private static final long DEFAULT_RETRY_AFTER_MS = 1000L;
 
     public static LlmException parse(int statusCode, String responseBody, HttpHeaders headers) {
         String message = "Upstream error HTTP " + statusCode;
@@ -83,20 +91,34 @@ public class LlmErrorParser {
 
     private static long parseRetryAfter(HttpHeaders headers) {
         if (headers == null) {
-            return 1000L; // default 1s
+            return DEFAULT_RETRY_AFTER_MS;
         }
-        Optional<String> retryMsOpt = headers.firstValue("retry-after-ms");
-        if (retryMsOpt.isPresent()) {
-            try {
-                return Long.parseLong(retryMsOpt.get());
-            } catch (NumberFormatException ignored) {}
+        // 毫秒级头优先，其次秒级头，都不可用时回落到默认退避
+        Optional<Long> millis = parseNumericHeader(headers.firstValue("retry-after-ms"));
+        if (millis.isPresent()) {
+            return millis.get();
         }
-        Optional<String> retrySecOpt = headers.firstValue("retry-after");
-        if (retrySecOpt.isPresent()) {
-            try {
-                return Long.parseLong(retrySecOpt.get()) * 1000L;
-            } catch (NumberFormatException ignored) {}
+        Optional<Long> seconds = parseNumericHeader(headers.firstValue("retry-after"));
+        if (seconds.isPresent()) {
+            return seconds.get() * 1000L;
         }
-        return 1000L;
+        return DEFAULT_RETRY_AFTER_MS;
+    }
+
+    /**
+     * 解析数值型响应头。
+     *
+     * <p>上游对 {@code retry-after} 的实现并不统一（有的返回 HTTP-date，有的返回空串），
+     * 解析失败一律按"该头不存在"处理，由调用方继续尝试下一级兜底，而不是中断错误解析流程。
+     */
+    private static Optional<Long> parseNumericHeader(Optional<String> rawValue) {
+        if (rawValue.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Long.parseLong(rawValue.get()));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
     }
 }

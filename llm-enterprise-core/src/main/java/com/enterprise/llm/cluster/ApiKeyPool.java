@@ -1,11 +1,12 @@
 package com.enterprise.llm.cluster;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Enterprise Multi-Key Pool with Rate-Limit Auto-Cooling and Smooth Rotation.
@@ -123,6 +124,10 @@ public class ApiKeyPool {
 
     public int size() {
         return entries.size();
+    }
+
+    public boolean isEmpty() {
+        return entries.isEmpty();
     }
 
     public int getAvailableCount() {

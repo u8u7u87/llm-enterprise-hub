@@ -1,22 +1,25 @@
 package com.enterprise.llm.router;
 
-import com.enterprise.llm.client.LlmClient;
-import com.enterprise.llm.client.OpenAiCompatibleLlmClient;
-import com.enterprise.llm.model.ChatCompletionChunk;
-import com.enterprise.llm.model.ChatCompletionRequest;
-import com.enterprise.llm.model.ChatCompletionResponse;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-
+import com.enterprise.llm.client.LlmClient;
+import com.enterprise.llm.client.OpenAiCompatibleLlmClient;
+import com.enterprise.llm.cluster.RemoteClusterManager;
+import com.enterprise.llm.cluster.UpstreamNode;
+import com.enterprise.llm.model.ChatCompletionChunk;
+import com.enterprise.llm.model.ChatCompletionRequest;
+import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.resilience.CircuitBreaker;
+import com.enterprise.llm.resilience.CircuitBreakerConfig;
+import com.enterprise.llm.resilience.CircuitBreakerState;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class FailoverRoutingServiceTest {
@@ -111,10 +114,10 @@ class FailoverRoutingServiceTest {
 
     @Test
     void shouldSelfHealWhenPrimaryRecoversAfterCooldown() throws Exception {
-        com.enterprise.llm.resilience.CircuitBreakerConfig fastConfig = 
-                new com.enterprise.llm.resilience.CircuitBreakerConfig(2, 100L, 1, 1);
-        com.enterprise.llm.resilience.CircuitBreaker customBreaker = 
-                new com.enterprise.llm.resilience.CircuitBreaker("test-primary", fastConfig);
+        CircuitBreakerConfig fastConfig = 
+                new CircuitBreakerConfig(2, 100L, 1, 1);
+        CircuitBreaker customBreaker = 
+                new CircuitBreaker("test-primary", fastConfig);
         routingService = new FailoverRoutingService(primaryClient, fallbackClient, "qwen2.5:0.5b", null, customBreaker);
 
         // Fail 1
@@ -130,7 +133,7 @@ class FailoverRoutingServiceTest {
                 .setBody("{\"choices\":[{\"message\":{\"content\":\"Fallback 2\"}}]}"));
         routingService.chatCompletionWithFailover(req);
 
-        assertThat(customBreaker.getState()).isEqualTo(com.enterprise.llm.resilience.CircuitBreakerState.OPEN);
+        assertThat(customBreaker.getState()).isEqualTo(CircuitBreakerState.OPEN);
 
         // Immediate next call should bypass primary completely
         fallbackServer.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
@@ -149,7 +152,7 @@ class FailoverRoutingServiceTest {
 
         // Must succeed from Primary and self-heal
         assertThat(healResp.choices().get(0).message().content()).isEqualTo("Primary Healed!");
-        assertThat(customBreaker.getState()).isEqualTo(com.enterprise.llm.resilience.CircuitBreakerState.CLOSED);
+        assertThat(customBreaker.getState()).isEqualTo(CircuitBreakerState.CLOSED);
         assertThat(primaryServer.getRequestCount()).isEqualTo(3);
     }
 
@@ -162,9 +165,9 @@ class FailoverRoutingServiceTest {
                     .setHeader("Content-Type", "application/json")
                     .setBody("{\"choices\":[{\"message\":{\"content\":\"From Remote GPU Node\"}}]}"));
 
-            com.enterprise.llm.cluster.UpstreamNode remoteNode = 
-                    new com.enterprise.llm.cluster.UpstreamNode("vllm-node-1", remoteNodeServer.url("/v1").toString());
-            com.enterprise.llm.cluster.RemoteClusterManager clusterManager = new com.enterprise.llm.cluster.RemoteClusterManager();
+            UpstreamNode remoteNode = 
+                    new UpstreamNode("vllm-node-1", remoteNodeServer.url("/v1").toString());
+            RemoteClusterManager clusterManager = new RemoteClusterManager();
             clusterManager.registerNode(remoteNode);
 
             routingService.setRemoteClusterManager(clusterManager);
@@ -193,9 +196,9 @@ class FailoverRoutingServiceTest {
                     .setHeader("Content-Type", "application/json")
                     .setBody("{\"choices\":[{\"message\":{\"content\":\"From Local Fallback Net\"}}]}"));
 
-            com.enterprise.llm.cluster.UpstreamNode remoteNode = 
-                    new com.enterprise.llm.cluster.UpstreamNode("vllm-node-fail", remoteNodeServer.url("/v1").toString());
-            com.enterprise.llm.cluster.RemoteClusterManager clusterManager = new com.enterprise.llm.cluster.RemoteClusterManager();
+            UpstreamNode remoteNode = 
+                    new UpstreamNode("vllm-node-fail", remoteNodeServer.url("/v1").toString());
+            RemoteClusterManager clusterManager = new RemoteClusterManager();
             clusterManager.registerNode(remoteNode);
 
             routingService.setRemoteClusterManager(clusterManager);

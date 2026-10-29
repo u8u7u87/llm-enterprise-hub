@@ -1,6 +1,13 @@
 package com.enterprise.llm.e2e;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import com.enterprise.llm.client.LlmClient;
+import com.enterprise.llm.exception.LlmRateLimitException;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
@@ -21,14 +28,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -161,8 +160,8 @@ class Phase9TrafficGovernanceE2ETest {
     @Test
     @DisplayName("E2E: Adaptive Jitter Retry policy bounded backoff")
     void testAdaptiveJitterRetryPolicyE2E() {
-        assertThat(retryPolicy.shouldRetry(new com.enterprise.llm.exception.LlmRateLimitException("Too Many Requests"), 1)).isTrue();
-        assertThat(retryPolicy.shouldRetry(new com.enterprise.llm.exception.LlmRateLimitException("Too Many Requests"), 4)).isFalse();
+        assertThat(retryPolicy.shouldRetry(new LlmRateLimitException("Too Many Requests"), 1)).isTrue();
+        assertThat(retryPolicy.shouldRetry(new LlmRateLimitException("Too Many Requests"), 4)).isFalse();
 
         long backoff = retryPolicy.computeBackoffMs(2);
         assertThat(backoff).isBetween(0L, 1000L);

@@ -1,15 +1,14 @@
 package com.enterprise.llm.cache;
 
+import java.util.List;
+import java.util.Optional;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.model.Usage;
+import com.enterprise.llm.rag.embedding.EmbeddingClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
-import java.util.Optional;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CacheEngineTest {
@@ -141,7 +140,7 @@ class CacheEngineTest {
     void shouldHitL2VectorSemanticCacheWithZeroLexicalOverlap() {
         properties.setSemanticThreshold(0.85);
         // Mock embedding client returning high cosine similarity for conceptually identical questions
-        com.enterprise.llm.rag.embedding.EmbeddingClient mockEmbedder = text -> {
+        EmbeddingClient mockEmbedder = text -> {
             if (text.contains("增值税发票")) {
                 return new float[]{1.0f, 0.0f, 0.0f};
             } else if (text.contains("开专票")) {

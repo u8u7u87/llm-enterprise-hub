@@ -7,7 +7,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3.46%20(WAL)-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.x%20Vector%20DB-00B4D8?logo=milvus&logoColor=white)](https://milvus.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-295%2B%20Passed%20(100%25)-success)](#-自动化测试与工程指标)
+[![Tests](https://img.shields.io/badge/Tests-337%20Passed%20(100%25)-success)](#-自动化测试与工程指标)
 [![Protocol](https://img.shields.io/badge/Protocol-OpenAI%20Compatible-black)](docs/api-reference.md)
 
 <p align="center">
@@ -92,7 +92,7 @@ flowchart LR
     subgraph STORAGE[" 💾 存储与数据基础设施 "]
         direction TB
         S_MILVUS[("🗄️ <b>Milvus 2.x</b><br>稠密向量语义缓存")]:::storageStyle
-        S_REDIS[("⚡ <b>Redis 7.x</b><br>原子分布式 Token 租约")]:::storageStyle
+        S_REDIS[("⚡ <b>Redis 7.x</b><br>分布式 Token 租约（适配器待接入）")]:::storageStyle
         S_SQLITE[("💾 <b>SQLite 3.x WAL</b><br>Agent 任务快照持久化")]:::storageStyle
     end
 
@@ -108,7 +108,7 @@ flowchart LR
     H3 -.->|"② 分布式 Ingress"| D_RAY
     H3 -.->|"② 故障熔断降级"| D_CLOUD
 
-    H1 -.->|"③ Lua 脚本原子预占"| S_REDIS
+    H1 -.->|"③ 原子预占（当前为单机内存实现）"| S_REDIS
     H3 -.->|"③ 毫秒级余弦相似度检索"| S_MILVUS
     H4 -.->|"③ 事务级状态 Checkpoint"| S_SQLITE
 ```
@@ -125,7 +125,7 @@ flowchart LR
 | **上游 (Upstream)** | **Spring Cloud / 业务微服务**<br>**LangChain / Spring AI / LlamaIndex**<br>**Open-WebUI / NextChat** | • **协议标准互通**：标准 OpenAI RESTful / SSE 协议，现有应用 0 代码修改即可接入；<br>• **企业安全增强**：业务请求进入时由 Hub 进行多租户鉴权、Token 租约预占、Prompt 注入防御与流式脱敏；<br>• **微服务能力化**：使用 `@LlmTool` 注解将企业现有 Spring Service 方法零代码暴露为 Agent 工具。 |
 | **中枢 (本项目)** | **LLM Enterprise Hub** | **承上启下的核心枢纽**：负责并发削峰、多租户配额、敏感脱敏、语义缓存、智能体断点容灾、多后端感知路由。 |
 | **下游 (Downstream)** | **vLLM / SGLang / Triton**<br>**Ray / Ray Serve**<br>**llama.cpp / Ollama**<br>**商业云 API (DeepSeek/OpenAI)** | • **算力负载均衡**：通过 `InferenceAwareLoadBalancer` 实时感知 vLLM/SGLang 排队深度与显存占用；<br>• **KV Cache 亲和**：提取 Prompt 前缀哈希实现 APC (Automatic Prefix Caching) 亲和路由；<br>• **算力自动降级**：私有算力故障或过载时，无缝透明降级至备用云端 API 或本地轻量模型。 |
-| **基建 (Foundation)** | **Milvus / Redis / SQLite** | • **向量语义缓存**：稠密向量余弦计算，毫秒级直接拦截重复语义请求；<br>• **分布式租约**：Redis Lua 脚本原子预占配额，避免集群并发额度击穿；<br>• **状态机快照**：SQLite WAL / 数据库事务级保存 Agent 交互状态，支撑故障自愈断点续跑。 |
+| **基建 (Foundation)** | **Milvus / SQLite**<br>**Redis（适配器待接入）** | • **向量语义缓存**：稠密向量余弦计算，毫秒级直接拦截重复语义请求；<br>• **租约预占**：当前为进程内 CAS 原子预占（`InMemoryQuotaStorageEngine`），多 Pod 场景需接入 Redis 适配器后才具备跨实例原子性；<br>• **状态机快照**：SQLite WAL / 数据库事务级保存 Agent 交互状态，支撑故障自愈断点续跑。 |
 
 > 📖 **深入阅读**：关于体系架构 4 层模型、5 大竞品阵营深度剖析与端到端协同场景时序，详见：  
 > 👉 [**LLM 在线服务全景生态定位与协同白皮书 (docs/ecosystem-positioning.md)**](docs/ecosystem-positioning.md)
@@ -141,12 +141,12 @@ flowchart LR
 | **底层语言与并发模型** | **Java 21 虚拟线程**<br>(百万并发纤程，零上下文切换惩罚) | Python asyncio<br>(受 GIL 限制，高并发需多进程) | Go 协程<br>(高并发轻量 Goroutine) | Node.js / TypeScript<br>(单线程事件循环) | Python (Flask / Celery)<br>(重型框架，面向 Web) | C++<br>(高性能网络事件循环) |
 | **交付形态与生态融合** | **双模驱动**：<br>① 独立 Gateway<br>② Spring Boot 原生 Starter | 独立 HTTP 服务 / Python 库 | 独立部署二进制 / Docker | 独立网关 / Node.js 库 | 独立综合 Web 平台<br>(面向业务人员) | Envoy 外部扩展插件 / Filter |
 | **Agent Harness 与断点续跑** | **原生支持长程任务状态机**<br>事务快照级 Checkpoint，中断可精准恢复 | ❌ 仅作 LLM API 透传<br>(无状态机能力) | ❌ 纯 API 聚合分发<br>(无智能体调度) | ❌ 仅透传函数调用，无状态机断点恢复 | ✅ 支持可视化工作流编排<br>(但无法嵌入已有微服务) | ❌ 纯流量代理层<br>(无业务与 Agent 状态) |
-| **多租户配额与财务治理** | **三层 Token 租约预占**<br>Lua 原子租约 + 异步削峰写回 + 微美元预算 | 简单配额追踪<br>(支持 Redis 扣费，无租约预占) | 基础积分/额度扣除<br>(直接更新数据库，大并发易锁表) | 基础预算限额控制 | 团队/工作空间 Token 限额 | 需依赖外部速率限制服务 |
-| **出站敏感数据脱敏 (DLP)** | **跨 Chunk 环形滑动窗口**<br>彻底解决边界割裂，支持双向保险库透明反脱敏 | 基础正则替换<br>(单包匹配，跨包失效) | ❌ 无内置 DLP 护栏 | 基础 PII 掩码<br>(依赖外部 Guardrail) | 基础内容审核接入 | 需结合外部 WAF |
+| **多租户配额与财务治理** | **三层 Token 租约预占**<br>原子预占 + 异步削峰写回 + 微美元预算<br>（跨 Pod 原子性需接入 Redis 适配器） | 简单配额追踪<br>(支持 Redis 扣费，无租约预占) | 基础积分/额度扣除<br>(直接更新数据库，大并发易锁表) | 基础预算限额控制 | 团队/工作空间 Token 限额 | 需依赖外部速率限制服务 |
+| **出站敏感数据脱敏 (DLP)** | **跨 Chunk 尾部分片扣留**<br>先掩码后切分，敏感串附近延迟一个 Chunk；支持双向保险库透明反脱敏 | 基础正则替换<br>(单包匹配，跨包失效) | ❌ 无内置 DLP 护栏 | 基础 PII 掩码<br>(依赖外部 Guardrail) | 基础内容审核接入 | 需结合外部 WAF |
 | **语义缓存实现深度** | **稠密向量余弦计算**<br>多租户标量物理隔离，支持毫秒级向量相似度 | 简单 Exact Hash / 基础 Redis 语义匹配 | 基础 Exact Hash 匹配 | 向量缓存 (支持多向量库后端) | 仅针对工作流节点简单缓存 | 基础 HTTP 缓存 |
 | **GPU 推理集群感知** | **K8s Headless DNS 动态感知**<br>支持 vLLM 前缀缓存 (APC) 与并发请求最小化负载均衡 | 静态权重轮询 | 静态多渠道权重与优先级轮询 | 静态多供应商路由 | 静态多模型提供商配置 | 基于 Envoy 负载均衡机制 |
 | **RAG 检索增强体系** | **前置工业级 RAG 流水线**<br>多轮改写 + Markdown 结构分块 + 忠实度防幻觉 | ❌ 无内置 RAG | ❌ 无内置 RAG | ❌ 无内置 RAG | ✅ 完备的知识库管理与检索 | ❌ 无内置 RAG |
-| **部署依赖与运维复杂度** | **极简零依赖**：<br>单 Jar 包内置 SQLite WAL + 嵌入式 Web 看板，亦可外接 Milvus/Redis | 需依赖 Python 运行时与 Redis | 单二进制文件 + SQLite/MySQL | 需 Node.js 运行环境与数据库 | 极重 (需 PostgreSQL, Redis, Weaviate/Qdrant, Celery) | 需掌握 Envoy 配置与容器体系 |
+| **部署依赖与运维复杂度** | **极简依赖**：<br>单 Jar 包内置 SQLite WAL + 嵌入式 Web 看板（看板前端资源经公网 CDN 加载 Tailwind/ECharts），亦可外接 Milvus/Redis | 需依赖 Python 运行时与 Redis | 单二进制文件 + SQLite/MySQL | 需 Node.js 运行环境与数据库 | 极重 (需 PostgreSQL, Redis, Weaviate/Qdrant, Celery) | 需掌握 Envoy 配置与容器体系 |
 
 ### 💡 选型决策指南 (When to choose which?)
 - **选择 LLM Enterprise Hub**：如果你的团队技术栈以 **Java / Spring Boot** 为主，需要一个**既能对外提供统一 OpenAI 兼容网关，又能以内嵌 Starter 直接注入微服务、将 Java 方法秒变 Agent Tool** 的生产级基础设施；同时需要**严格的租户 Token 租约、跨 Chunk 流式安全脱敏、长程智能体断点容灾与零依赖运维**。
@@ -182,7 +182,7 @@ mindmap
       跨租户数据越权与高危动作守门人
     全链路双向安全防护网
       提示词注入深度语义与规则拦截
-      跨 Chunk 环形滑动窗口流式敏感词过滤
+      跨 Chunk 尾部分片扣留流式敏感词过滤
       双向隐私脱敏保险库与透明反脱敏
       动态脱敏规则热加载与自定义配置
     知识增强与 RAG 工业级防御
@@ -368,6 +368,25 @@ llm-enterprise-hub/
 
 ---
 
+## 🔧 能力开关与生效条件
+
+为保证"默认安全、默认零额外成本"，部分能力**默认关闭**。下表列出每个能力真实的生效条件，避免"文档说已实现、实际没接线"的落差：
+
+| 能力 | 默认状态 | 生效条件 | 说明 |
+| :--- | :--- | :--- | :--- |
+| OpenAI 兼容网关 `/v1/chat/completions` | 开启 | 无 | 需携带 `X-API-Key` |
+| Prompt 注入防护 | 开启 | `security.guardrail.prompt.enabled` | 规则可在 YAML 中扩展 |
+| 出站 DLP 脱敏 | 开启 | `security.dlp.enabled` | 命中即替换为 `[REDACTED_*]` |
+| 流式输出护栏 | 开启（BLOCK） | `llm.guardrail.streaming.mode` = `BLOCK` / `MASK` | MASK 模式先掩码再切分，敏感串附近延迟一个 Chunk |
+| 两级缓存（L1 精确 + L2 语义） | 开启 | `cache.enabled` | 隐私保险库命中 PII 时自动跳过读写 |
+| Canary 灰度切流 | **关闭** | `llm.canary.enabled=true` + `llm.canary.rules[]` | 命中改道时响应头回写 `X-Hub-Routed-Model` |
+| 影子流量镜像 | **关闭** | `llm.shadow.enabled=true` + `llm.shadow.rules[]` | 仅同步链路；不占租户配额；失败不影响主链路 |
+| 双向隐私保险库 | **关闭** | `llm.privacy.enabled=true` | 只还原用户**本次请求中提供过**的敏感数据 |
+| RAG 检索增强 | 开启 | `rag.enabled` | 无向量库时降级为内存余弦检索 |
+| 分布式配额租约 | 单机内存 | 需接入 Redis 适配器（尚未实现） | `DistributedLuaQuotaEngine` 当前为进程内模拟 |
+
+---
+
 ## 🧪 自动化测试与工程指标
 
 本项目贯彻测试驱动开发（TDD）与防御性编程原则，所有核心特性均具备严密的单元测试、状态迁移测试与高并发集成测试保障：
@@ -376,12 +395,12 @@ llm-enterprise-hub/
 [INFO] -------------------------------------------------------
 [INFO]  T E S T S   S U M M A R Y
 [INFO] -------------------------------------------------------
-[INFO] Tests run: 295, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 337, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 [INFO] -------------------------------------------------------
 ```
 
-- **测试用例数**：**295+ 全自动化测试**，测试通过率保持 **100%**；
+- **测试用例数**：**337 个全自动化测试**（core / starter / gateway / sample 四个模块合计），测试通过率保持 **100%**；
 - **测试覆盖维度**：
   - **核心单元覆盖**：滑动窗口限流、原子 Token 租约预占、双向隐私脱敏正则、向量余弦计算；
   - **状态机与容灾测试**：Agent Task 断点持久化与故障自愈还原、三态熔断器半开探测、投机竞速对冲；

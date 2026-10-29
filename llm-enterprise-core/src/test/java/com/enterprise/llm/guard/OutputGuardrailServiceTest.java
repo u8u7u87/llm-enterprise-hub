@@ -1,8 +1,10 @@
 package com.enterprise.llm.guard;
 
+import com.enterprise.llm.guard.dlp.DlpMaskType;
+import com.enterprise.llm.guard.dlp.DlpRule;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 class OutputGuardrailServiceTest {
@@ -69,11 +71,11 @@ class OutputGuardrailServiceTest {
 
     @Test
     void shouldSupportCustomDynamicDlpRule() {
-        guardrailService.addDynamicRule(new com.enterprise.llm.guard.dlp.DlpRule(
+        guardrailService.addDynamicRule(new DlpRule(
                 "order_sn",
                 "Order Serial Number",
                 "ORD-[0-9]{8}",
-                com.enterprise.llm.guard.dlp.DlpMaskType.REPLACE_TAG,
+                DlpMaskType.REPLACE_TAG,
                 "[REDACTED_ORDER_SN]",
                 true
         ));
@@ -87,16 +89,16 @@ class OutputGuardrailServiceTest {
 
     @Test
     void shouldThrowSecurityViolationWhenRuleMaskTypeIsBlock() {
-        guardrailService.addDynamicRule(new com.enterprise.llm.guard.dlp.DlpRule(
+        guardrailService.addDynamicRule(new DlpRule(
                 "confidential_leak",
                 "Top Secret",
                 "(?i)internal_payroll_dump",
-                com.enterprise.llm.guard.dlp.DlpMaskType.BLOCK,
+                DlpMaskType.BLOCK,
                 "",
                 true
         ));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                 guardrailService.sanitize("Here is the internal_payroll_dump file")
         ).isInstanceOf(SecurityViolationException.class);
     }

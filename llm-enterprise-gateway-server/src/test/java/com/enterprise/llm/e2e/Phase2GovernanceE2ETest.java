@@ -2,7 +2,6 @@ package com.enterprise.llm.e2e;
 
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.client.OpenAiCompatibleLlmClient;
-import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.tenant.TenantEntity;
 import com.enterprise.llm.tenant.TenantService;
 import okhttp3.mockwebserver.MockResponse;
@@ -24,8 +23,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

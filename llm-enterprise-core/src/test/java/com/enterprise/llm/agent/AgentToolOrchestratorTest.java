@@ -1,8 +1,6 @@
 package com.enterprise.llm.agent;
 
 import com.enterprise.llm.client.LlmClient;
-import com.enterprise.llm.guard.CrossTenantViolationException;
-import com.enterprise.llm.guard.SecurityViolationException;
 import com.enterprise.llm.guard.ToolActionGatekeeper;
 import com.enterprise.llm.guard.tool.PropertiesToolPolicyProvider;
 import com.enterprise.llm.guard.tool.ToolPolicyProperties;

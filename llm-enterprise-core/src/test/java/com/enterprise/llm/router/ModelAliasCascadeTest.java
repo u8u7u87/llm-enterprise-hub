@@ -1,6 +1,11 @@
 package com.enterprise.llm.router;
 
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import com.enterprise.llm.client.LlmClient;
+import com.enterprise.llm.client.StreamCancellationHandle;
+import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
@@ -9,10 +14,6 @@ import com.enterprise.llm.resilience.CircuitBreaker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ModelAliasCascadeTest {
@@ -69,11 +70,11 @@ class ModelAliasCascadeTest {
             }
 
             @Override
-            public com.enterprise.llm.client.StreamCancellationHandle streamChatCompletion(
+            public StreamCancellationHandle streamChatCompletion(
                     ChatCompletionRequest request,
-                    java.util.function.Consumer<com.enterprise.llm.model.ChatCompletionChunk> onChunk,
+                    Consumer<ChatCompletionChunk> onChunk,
                     Runnable onComplete,
-                    java.util.function.Consumer<Throwable> onError) {
+                    Consumer<Throwable> onError) {
                 return null;
             }
         };
@@ -85,11 +86,11 @@ class ModelAliasCascadeTest {
             }
 
             @Override
-            public com.enterprise.llm.client.StreamCancellationHandle streamChatCompletion(
+            public StreamCancellationHandle streamChatCompletion(
                     ChatCompletionRequest request,
-                    java.util.function.Consumer<com.enterprise.llm.model.ChatCompletionChunk> onChunk,
+                    Consumer<ChatCompletionChunk> onChunk,
                     Runnable onComplete,
-                    java.util.function.Consumer<Throwable> onError) {
+                    Consumer<Throwable> onError) {
                 return null;
             }
         };

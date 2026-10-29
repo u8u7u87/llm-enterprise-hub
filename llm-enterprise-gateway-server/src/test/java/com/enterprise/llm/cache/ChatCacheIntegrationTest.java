@@ -1,6 +1,5 @@
 package com.enterprise.llm.cache;
 
-import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.model.Usage;

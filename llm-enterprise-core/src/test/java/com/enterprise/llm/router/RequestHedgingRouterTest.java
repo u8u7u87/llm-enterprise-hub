@@ -47,6 +47,7 @@ class RequestHedgingRouterTest {
 
     @AfterEach
     void tearDown() throws IOException {
+        hedgingRouter.close();
         primaryServer.shutdown();
         fallbackServer.shutdown();
     }

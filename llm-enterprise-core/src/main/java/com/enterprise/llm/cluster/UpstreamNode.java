@@ -67,7 +67,7 @@ public class UpstreamNode {
     }
 
     public String getApiKey() {
-        if (apiKeyPool != null && apiKeyPool.size() > 0) {
+        if (apiKeyPool != null && !apiKeyPool.isEmpty()) {
             return apiKeyPool.acquireKey().getKey();
         }
         return apiKey;

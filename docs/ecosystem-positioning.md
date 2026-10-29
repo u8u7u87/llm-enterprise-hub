@@ -214,7 +214,7 @@ sequenceDiagram
         Hub->>vLLM: 6. 路由转发至最轻载且前缀命中的 vLLM 节点
         vLLM-->>Hub: 7. SSE 流式吐出 Token Chunks
         loop 跨 Chunk 流式脱敏
-            Note over Hub: 8. 环形滑动窗口识别敏感词/身份证/秘钥<br>透明脱敏为假名
+            Note over Hub: 8. 尾部分片扣留识别敏感词/身份证/秘钥<br>透明脱敏为假名
         end
         Hub-->>App: 9. 干净合规的 SSE 增量内容输出
         vLLM-->>Hub: 10. 推理结束，携带实际 usage.total_tokens

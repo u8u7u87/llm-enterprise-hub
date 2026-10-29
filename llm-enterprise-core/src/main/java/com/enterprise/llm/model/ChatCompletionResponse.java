@@ -16,6 +16,16 @@ public record ChatCompletionResponse(
         List<Choice> choices,
         Usage usage
 ) {
+    /**
+     * 复制本响应但替换 usage。
+     *
+     * <p>多轮 Agent 循环里最后一次上游响应只带单轮用量，需要把累计用量盖上去；
+     * 这个转换在两处编排器里重复出现过，收敛到这里。
+     */
+    public ChatCompletionResponse withUsage(Usage usage) {
+        return new ChatCompletionResponse(id, object, created, model, choices, usage);
+    }
+
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Choice(

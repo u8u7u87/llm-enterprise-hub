@@ -2,7 +2,6 @@ package com.enterprise.llm.e2e;
 
 import com.enterprise.llm.admin.AdminAnalyticsOverview;
 import com.enterprise.llm.agent.ToolCall;
-import com.enterprise.llm.agent.ToolDefinition;
 import com.enterprise.llm.agent.ToolRegistry;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.client.OpenAiCompatibleLlmClient;

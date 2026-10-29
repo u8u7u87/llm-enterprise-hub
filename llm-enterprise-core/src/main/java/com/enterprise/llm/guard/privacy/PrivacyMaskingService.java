@@ -1,9 +1,12 @@
 package com.enterprise.llm.guard.privacy;
 
-import org.springframework.stereotype.Service;
-
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.enterprise.llm.model.ChatCompletionRequest;
+import com.enterprise.llm.model.ChatMessage;
+import org.springframework.stereotype.Service;
 
 /**
  * 入站敏感数据伪匿名化服务
@@ -30,6 +33,41 @@ public class PrivacyMaskingService {
         result = replaceWithVault(result, ID_CARD_PATTERN, "ID_CARD", vault);
 
         return result;
+    }
+
+    /**
+     * Rewrites every message of a request into its pseudonymised form, keeping role, tool calls and
+     * tool-call ids untouched. The returned request carries placeholders such as {@code <PHONE_1>};
+     * the caller must keep the {@code vault} around to restore them on the way out.
+     */
+    public ChatCompletionRequest maskRequest(
+            ChatCompletionRequest request, PrivacyVault vault) {
+        if (request == null || request.messages() == null || vault == null) {
+            return request;
+        }
+
+        List<ChatMessage> masked = new ArrayList<>(request.messages().size());
+        for (ChatMessage message : request.messages()) {
+            if (message == null) {
+                continue;
+            }
+            masked.add(new ChatMessage(
+                    message.role(),
+                    maskAndStore(message.content(), vault),
+                    message.toolCalls(),
+                    message.toolCallId()));
+        }
+
+        return new ChatCompletionRequest(
+                request.model(),
+                masked,
+                request.stream(),
+                request.temperature(),
+                request.maxTokens(),
+                request.tools(),
+                request.toolChoice(),
+                request.sessionId(),
+                request.user());
     }
 
     private String replaceWithVault(String input, Pattern pattern, String entityType, PrivacyVault vault) {

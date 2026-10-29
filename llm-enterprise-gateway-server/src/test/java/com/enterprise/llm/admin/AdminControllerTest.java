@@ -1,7 +1,11 @@
 package com.enterprise.llm.admin;
 
+import java.util.List;
+import com.enterprise.llm.metrics.MetricsRecordService;
+import com.enterprise.llm.ratelimit.TenantRateLimiter;
 import com.enterprise.llm.tenant.TenantEntity;
 import com.enterprise.llm.tenant.TenantRepository;
+import com.enterprise.llm.tenant.TenantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,9 +13,6 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.util.List;
-
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -33,13 +34,13 @@ class AdminControllerTest {
     private AdminProperties adminProperties;
 
     @MockBean
-    private com.enterprise.llm.tenant.TenantService tenantService;
+    private TenantService tenantService;
 
     @MockBean
-    private com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
+    private TenantRateLimiter tenantRateLimiter;
 
     @MockBean
-    private com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
+    private MetricsRecordService metricsRecordService;
 
     @BeforeEach
     void setUp() {

@@ -1,8 +1,5 @@
 package com.enterprise.llm.quota;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,7 +12,6 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class DistributedLuaQuotaEngine implements QuotaStorageEngine {
 
-    private static final Logger log = LoggerFactory.getLogger(DistributedLuaQuotaEngine.class);
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.BASIC_ISO_DATE;
 
     // Production-ready Redis Lua Script definitions

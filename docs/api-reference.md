@@ -120,7 +120,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 
 ### 1.2 流式对话补全 (Server-Sent Events)
 
-设置 `"stream": true`，网关将返回标准 SSE 数据流。在流式传输过程中，网关的**跨 Chunk 环形滑动窗口脱敏引擎**会对数据块做实时合规校验，若命中拦截规则可优雅熔断或掩码替换。
+设置 `"stream": true`，网关将返回标准 SSE 数据流。在流式传输过程中，网关的**跨 Chunk 尾部分片扣留脱敏引擎**会对数据块做实时合规校验，若命中拦截规则可优雅熔断或掩码替换。
 
 #### cURL 示例
 ```bash

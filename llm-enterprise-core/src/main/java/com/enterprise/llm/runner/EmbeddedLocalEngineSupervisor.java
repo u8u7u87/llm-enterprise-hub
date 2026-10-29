@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
@@ -27,6 +28,9 @@ public class EmbeddedLocalEngineSupervisor {
     private final Function<List<String>, Process> processLauncher;
     private Process managedProcess;
     private volatile boolean healthy = false;
+
+    /** 关闭钩子只能注册一次：注册后无法撤销，重复注册会随重启次数累积。 */
+    private final AtomicBoolean shutdownHookRegistered = new AtomicBoolean(false);
 
     public EmbeddedLocalEngineSupervisor(
             EmbeddedRunnerProperties properties,
@@ -51,7 +55,7 @@ public class EmbeddedLocalEngineSupervisor {
 
         try {
             this.managedProcess = processLauncher.apply(command);
-            Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "embedded-llm-shutdown-hook"));
+            registerShutdownHookOnce();
             pollHealthUntilReady();
         } catch (Exception e) {
             log.error("Failed to start embedded local LLM process: {}", e.getMessage(), e);
@@ -79,6 +83,18 @@ public class EmbeddedLocalEngineSupervisor {
 
     public boolean isRunning() {
         return managedProcess != null && managedProcess.isAlive();
+    }
+
+    /**
+     * 注册 JVM 关闭钩子，保证 {@code start()} 被重复调用（重启、Bean 重建）时不会累积钩子。
+     *
+     * <p>关闭钩子必须是一个 {@link Thread}，无法用线程池替代；而
+     * {@link Runtime#addShutdownHook(Thread)} 注册后不可撤销，所以用一次性标记兜住。
+     */
+    private void registerShutdownHookOnce() {
+        if (shutdownHookRegistered.compareAndSet(false, true)) {
+            Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "embedded-llm-shutdown-hook"));
+        }
     }
 
     public boolean isHealthy() {

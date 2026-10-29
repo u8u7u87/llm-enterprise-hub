@@ -1,5 +1,9 @@
 package com.enterprise.llm.agent;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
@@ -9,12 +13,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 
@@ -40,7 +38,10 @@ class ToolConcurrencyAndScopingTest {
                     args -> {
                         try {
                             Thread.sleep(100);
-                        } catch (InterruptedException ignored) {}
+                        } catch (InterruptedException e) {
+                            // 恢复中断标志，避免把中断状态吞掉导致后续断言行为不可预期
+                            Thread.currentThread().interrupt();
+                        }
                         return "{\"result\": \"data_" + id + "\"}";
                     }
             );
@@ -130,7 +131,7 @@ class ToolConcurrencyAndScopingTest {
         orchestrator.runLoopWithCheckpoint(
                 mockClient,
                 new ChatCompletionRequest("qwen2.5:0.5b", List.of(ChatMessage.user("execute vip")), false, 0.7),
-                new java.util.ArrayList<>(List.of(ChatMessage.user("execute vip"))),
+                new ArrayList<>(List.of(ChatMessage.user("execute vip"))),
                 "tenant-normal",
                 0,
                 5,

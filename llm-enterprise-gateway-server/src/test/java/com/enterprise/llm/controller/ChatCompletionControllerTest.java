@@ -1,14 +1,30 @@
 package com.enterprise.llm.controller;
 
-import com.enterprise.llm.client.LlmClient;
+import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import com.enterprise.llm.cache.CacheEngine;
 import com.enterprise.llm.client.StreamCancellationHandle;
+import com.enterprise.llm.exception.LlmAuthenticationException;
+import com.enterprise.llm.exception.LlmContentFilterException;
+import com.enterprise.llm.guard.OutputGuardrailService;
+import com.enterprise.llm.guard.PromptGuardrailService;
+import com.enterprise.llm.metrics.MetricsRecordService;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
+import com.enterprise.llm.quota.TenantQuotaService;
+import com.enterprise.llm.ratelimit.RateLimitResult;
+import com.enterprise.llm.ratelimit.TenantRateLimiter;
+import com.enterprise.llm.router.FailoverRoutingService;
 import com.enterprise.llm.service.ChatExecutionService;
-import com.enterprise.llm.exception.LlmAuthenticationException;
-import com.enterprise.llm.exception.LlmContentFilterException;
+import com.enterprise.llm.tenant.TenantEntity;
+import com.enterprise.llm.tenant.TenantService;
+import com.enterprise.llm.token.TokenEstimator;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,14 +34,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -40,31 +50,31 @@ class ChatCompletionControllerTest {
     private ChatExecutionService chatExecutionService;
 
     @MockBean
-    private com.enterprise.llm.router.FailoverRoutingService failoverRoutingService;
+    private FailoverRoutingService failoverRoutingService;
 
     @MockBean
-    private com.enterprise.llm.tenant.TenantService tenantService;
+    private TenantService tenantService;
 
     @MockBean
-    private com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
+    private TenantRateLimiter tenantRateLimiter;
 
     @MockBean
-    private com.enterprise.llm.guard.PromptGuardrailService promptGuardrailService;
+    private PromptGuardrailService promptGuardrailService;
 
     @MockBean
-    private com.enterprise.llm.quota.TenantQuotaService tenantQuotaService;
+    private TenantQuotaService tenantQuotaService;
 
     @MockBean
-    private com.enterprise.llm.guard.OutputGuardrailService outputGuardrailService;
+    private OutputGuardrailService outputGuardrailService;
 
     @MockBean
-    private com.enterprise.llm.token.TokenEstimator tokenEstimator;
+    private TokenEstimator tokenEstimator;
 
     @MockBean
-    private com.enterprise.llm.cache.CacheEngine cacheEngine;
+    private CacheEngine cacheEngine;
 
     @MockBean
-    private com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
+    private MetricsRecordService metricsRecordService;
 
     @Test
     void shouldReturnSyncChatCompletion() throws Exception {
@@ -74,7 +84,7 @@ class ChatCompletionControllerTest {
                 null
         );
         Mockito.when(tenantService.authenticateApiKey(any()))
-                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+                .thenReturn(Optional.of(new TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
         Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
         Mockito.when(failoverRoutingService.chatCompletionWithFailover(any())).thenReturn(dummyResponse);
@@ -103,7 +113,7 @@ class ChatCompletionControllerTest {
     @Test
     void shouldStreamChatCompletionViaSse() throws Exception {
         Mockito.when(tenantService.authenticateApiKey(any()))
-                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+                .thenReturn(Optional.of(new TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
         Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
         Mockito.when(failoverRoutingService.streamChatCompletionWithFailover(any(), any(), any(), any()))
@@ -149,14 +159,14 @@ class ChatCompletionControllerTest {
         SseEmitter emitter = chatExecutionService.executeStream(request);
 
         assertThat(cancelled.get()).isFalse();
-        emitter.completeWithError(new java.io.IOException("Client disconnected"));
+        emitter.completeWithError(new IOException("Client disconnected"));
         assertThat(cancelled.get()).isTrue();
     }
 
     @Test
     void shouldRejectEmptyMessages() throws Exception {
         Mockito.when(tenantService.authenticateApiKey(any()))
-                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+                .thenReturn(Optional.of(new TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
 
         String json = """
@@ -168,13 +178,13 @@ class ChatCompletionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isBadRequest())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("messages must not be empty")));
+                .andExpect(content().string(Matchers.containsString("messages must not be empty")));
     }
 
     @Test
     void shouldFormatLlmAuthenticationExceptionAsOpenAiJson() throws Exception {
         Mockito.when(tenantService.authenticateApiKey(any()))
-                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+                .thenReturn(Optional.of(new TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
         Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
         Mockito.when(failoverRoutingService.chatCompletionWithFailover(any()))
@@ -206,7 +216,7 @@ class ChatCompletionControllerTest {
     @Test
     void shouldFormatLlmContentFilterExceptionAsOpenAiJson() throws Exception {
         Mockito.when(tenantService.authenticateApiKey(any()))
-                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 0, true)));
+                .thenReturn(Optional.of(new TenantEntity("t1", "T", "k", 10, 100, 0, true)));
         Mockito.when(tenantRateLimiter.tryAcquire(any())).thenReturn(true);
         Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
         Mockito.when(failoverRoutingService.chatCompletionWithFailover(any()))
@@ -238,13 +248,13 @@ class ChatCompletionControllerTest {
     @Test
     void shouldRejectWhenTpmExceeded() throws Exception {
         Mockito.when(tenantService.authenticateApiKey(any()))
-                .thenReturn(java.util.Optional.of(new com.enterprise.llm.tenant.TenantEntity("t1", "T", "k", 10, 100, 500, 100000, 0, true)));
+                .thenReturn(Optional.of(new TenantEntity("t1", "T", "k", 10, 100, 500, 100000, 0, true)));
         Mockito.when(tokenEstimator.estimateTotalReservationTokens(any(), any()))
                 .thenReturn(600);
         Mockito.when(tenantRateLimiter.tryAcquireDetailed(any(), Mockito.eq(0)))
-                .thenReturn(com.enterprise.llm.ratelimit.RateLimitResult.granted());
+                .thenReturn(RateLimitResult.granted());
         Mockito.when(tenantRateLimiter.tryAcquireTpm(any(), Mockito.eq(600)))
-                .thenReturn(com.enterprise.llm.ratelimit.RateLimitResult.rejected("TPM_EXCEEDED: 1200/500", 2000L));
+                .thenReturn(RateLimitResult.rejected("TPM_EXCEEDED: 1200/500", 2000L));
         Mockito.when(promptGuardrailService.isSafe(any())).thenReturn(true);
 
         String jsonRequest = """
@@ -259,6 +269,6 @@ class ChatCompletionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonRequest))
                 .andExpect(status().isTooManyRequests())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("TPM_EXCEEDED")));
+                .andExpect(content().string(Matchers.containsString("TPM_EXCEEDED")));
     }
 }

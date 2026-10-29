@@ -1,20 +1,28 @@
 package com.enterprise.llm.cluster;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import com.enterprise.llm.backend.InferenceBackendAdapter;
 import com.enterprise.llm.backend.InferenceBackendRegistry;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.client.OpenAiCompatibleLlmClient;
 import com.enterprise.llm.cluster.discovery.ClusterDiscoveryProvider;
 import com.enterprise.llm.cluster.lb.ClusterLoadBalancer;
-import com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Enterprise Remote Inference Cluster Manager.
@@ -183,11 +191,8 @@ public class RemoteClusterManager {
         if (scheduledExecutor != null && !scheduledExecutor.isShutdown()) {
             return;
         }
-        scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "cluster-discovery-worker");
-            t.setDaemon(true);
-            return t;
-        });
+        scheduledExecutor = Executors.newSingleThreadScheduledExecutor(
+                Thread.ofPlatform().daemon().name("cluster-discovery-worker").factory());
         scheduledExecutor.scheduleAtFixedRate(
                 this::refreshTopology,
                 0,

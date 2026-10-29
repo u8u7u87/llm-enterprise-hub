@@ -1,37 +1,23 @@
 package com.enterprise.llm.backend.adapter;
 
 import com.enterprise.llm.backend.EngineType;
-import com.enterprise.llm.backend.InferenceBackendAdapter;
 import com.enterprise.llm.cluster.UpstreamNode;
 import com.enterprise.llm.cluster.lb.ClusterLoadBalancer;
 import com.enterprise.llm.cluster.lb.PrefixHashLoadBalancer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * vLLM specialized inference backend adapter.
- * Optimized for PagedAttention, Automatic Prefix Caching (APC),
- * and queue backpressure monitoring.
+ * vLLM 专用推理适配器。
+ * 针对 PagedAttention、Automatic Prefix Caching（APC）与队列背压监控做了适配。
  */
-public class VllmInferenceAdapter implements InferenceBackendAdapter {
+public class VllmInferenceAdapter extends AbstractInferenceAdapter {
 
-    private static final Logger log = LoggerFactory.getLogger(VllmInferenceAdapter.class);
-
-    private static final Pattern WAITING_REQS_PATTERN = Pattern.compile(
-            "(?:vllm:)?num_requests_waiting(?:\\{[^}]*\\})?\\s+([0-9]+(?:\\.[0-9]+)?)", Pattern.CASE_INSENSITIVE
-    );
+    private static final Pattern WAITING_REQUESTS_PATTERN = Pattern.compile(
+            "(?:vllm:)?num_requests_waiting(?:\\{[^}]*\\})?\\s+([0-9]+(?:\\.[0-9]+)?)", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern GPU_CACHE_PATTERN = Pattern.compile(
-            "(?:vllm:)?gpu_cache_usage_factor(?:\\{[^}]*\\})?\\s+([0-9]+(?:\\.[0-9]+)?)", Pattern.CASE_INSENSITIVE
-    );
+            "(?:vllm:)?gpu_cache_usage_factor(?:\\{[^}]*\\})?\\s+([0-9]+(?:\\.[0-9]+)?)", Pattern.CASE_INSENSITIVE);
 
     @Override
     public String getEngineType() {
@@ -40,77 +26,18 @@ public class VllmInferenceAdapter implements InferenceBackendAdapter {
 
     @Override
     public ClusterLoadBalancer createDefaultLoadBalancer() {
-        // vLLM Automatic Prefix Caching (APC) benefits heavily from prefix hash routing
+        // vLLM 的 APC 命中率高度依赖前缀稳定，因此默认用前缀哈希路由
         return new PrefixHashLoadBalancer();
     }
 
     @Override
-    public boolean checkHealth(UpstreamNode node, HttpClient httpClient) {
-        if (node == null || node.getBaseUrl() == null || node.getBaseUrl().isBlank()) {
-            return false;
-        }
-        HttpClient client = httpClient != null ? httpClient : HttpClient.newHttpClient();
-        String rootUrl = getRootUrl(node.getBaseUrl());
-        String probeUrl = rootUrl + "/health";
-
-        try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(probeUrl))
-                    .timeout(Duration.ofSeconds(4))
-                    .GET();
-
-            String apiKey = node.getApiKey();
-            if (apiKey != null && !apiKey.isBlank()) {
-                builder.header("Authorization", "Bearer " + apiKey);
-            }
-
-            HttpResponse<Void> response = client.send(builder.build(), HttpResponse.BodyHandlers.discarding());
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                return true;
-            }
-            // Fallback probe to /v1/models if /health returned non-200
-            String fallbackUrl = rootUrl + "/v1/models";
-            HttpRequest fallbackReq = HttpRequest.newBuilder()
-                    .uri(URI.create(fallbackUrl))
-                    .timeout(Duration.ofSeconds(3))
-                    .GET()
-                    .build();
-            HttpResponse<Void> fallbackResp = client.send(fallbackReq, HttpResponse.BodyHandlers.discarding());
-            return fallbackResp.statusCode() >= 200 && fallbackResp.statusCode() < 300;
-        } catch (Exception e) {
-            log.debug("vLLM health probe failed for node [{}]: {}", node.getId(), e.getMessage());
-            return false;
-        }
+    protected String primaryProbePath() {
+        return "/health";
     }
 
     @Override
-    public void extractMetrics(UpstreamNode node, String prometheusText) {
-        if (node == null || prometheusText == null || prometheusText.isBlank()) {
-            return;
-        }
-
-        Matcher waitMatcher = WAITING_REQS_PATTERN.matcher(prometheusText);
-        if (waitMatcher.find()) {
-            try {
-                int waiting = (int) Double.parseDouble(waitMatcher.group(1));
-                node.setWaitingRequests(waiting);
-            } catch (Exception ignored) {}
-        }
-
-        Matcher gpuMatcher = GPU_CACHE_PATTERN.matcher(prometheusText);
-        if (gpuMatcher.find()) {
-            try {
-                double gpuCache = Double.parseDouble(gpuMatcher.group(1));
-                node.setGpuCacheUsage(gpuCache);
-            } catch (Exception ignored) {}
-        }
-    }
-
-    private String getRootUrl(String baseUrl) {
-        String clean = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        if (clean.endsWith("/v1")) {
-            return clean.substring(0, clean.length() - 3);
-        }
-        return clean;
+    protected void doExtractMetrics(UpstreamNode node, String prometheusText) {
+        applyWaitingRequests(node, WAITING_REQUESTS_PATTERN, prometheusText);
+        applyGpuCacheUsage(node, GPU_CACHE_PATTERN, prometheusText);
     }
 }

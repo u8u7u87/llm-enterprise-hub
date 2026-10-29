@@ -1,9 +1,9 @@
 package com.enterprise.llm.cost;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -64,7 +64,7 @@ class TenantBudgetManagerTest {
         budgetManager.setBudgetLimit(tenantId, 100.0);
         budgetManager.setWarningRatio(0.80);
 
-        final java.util.concurrent.atomic.AtomicBoolean listenerInvoked = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final AtomicBoolean listenerInvoked = new AtomicBoolean(false);
         budgetManager.setWarningListener((id, spent, limit, ratio) -> {
             if (id.equals(tenantId) && ratio >= 0.8) {
                 listenerInvoked.set(true);

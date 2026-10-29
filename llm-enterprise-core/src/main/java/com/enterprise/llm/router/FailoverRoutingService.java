@@ -1,7 +1,13 @@
 package com.enterprise.llm.router;
 
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import com.enterprise.llm.backend.InferenceBackendAdapter;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.client.StreamCancellationHandle;
+import com.enterprise.llm.cluster.RemoteClusterManager;
+import com.enterprise.llm.cluster.UpstreamNode;
 import com.enterprise.llm.context.ContextManager;
 import com.enterprise.llm.exception.LlmAuthenticationException;
 import com.enterprise.llm.exception.LlmContentFilterException;
@@ -19,10 +25,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
-
 @Service
 public class FailoverRoutingService implements LlmClient {
 
@@ -37,7 +39,7 @@ public class FailoverRoutingService implements LlmClient {
     private ContextManager contextManager;
 
     @Autowired(required = false)
-    private com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager;
+    private RemoteClusterManager remoteClusterManager;
 
     @Autowired(required = false)
     private ModelAliasRegistry modelAliasRegistry;
@@ -55,7 +57,7 @@ public class FailoverRoutingService implements LlmClient {
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
             @Autowired(required = false) ContextManager contextManager,
             @Autowired(required = false) CircuitBreaker circuitBreaker,
-            @Autowired(required = false) com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager,
+            @Autowired(required = false) RemoteClusterManager remoteClusterManager,
             @Autowired(required = false) ModelAliasRegistry modelAliasRegistry
     ) {
         this.primaryClient = primaryClient;
@@ -73,7 +75,7 @@ public class FailoverRoutingService implements LlmClient {
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
             @Autowired(required = false) ContextManager contextManager,
             @Autowired(required = false) CircuitBreaker circuitBreaker,
-            @Autowired(required = false) com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager
+            @Autowired(required = false) RemoteClusterManager remoteClusterManager
     ) {
         this(primaryClient, fallbackClient, fallbackModel, contextManager, circuitBreaker, remoteClusterManager, null);
     }
@@ -125,11 +127,11 @@ public class FailoverRoutingService implements LlmClient {
         this.backoffBaseMs = backoffBaseMs;
     }
 
-    public com.enterprise.llm.cluster.RemoteClusterManager getRemoteClusterManager() {
+    public RemoteClusterManager getRemoteClusterManager() {
         return remoteClusterManager;
     }
 
-    public void setRemoteClusterManager(com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager) {
+    public void setRemoteClusterManager(RemoteClusterManager remoteClusterManager) {
         this.remoteClusterManager = remoteClusterManager;
     }
 
@@ -168,7 +170,7 @@ public class FailoverRoutingService implements LlmClient {
     private ChatCompletionResponse executeSingleModel(ChatCompletionRequest request, boolean allowFallback) {
         // 1. Try Remote Compute Cluster first if discovered and available
         if (remoteClusterManager != null && remoteClusterManager.hasActiveNodes()) {
-            com.enterprise.llm.cluster.UpstreamNode node = remoteClusterManager.selectNode(request);
+            UpstreamNode node = remoteClusterManager.selectNode(request);
             if (node != null) {
                 LlmClient nodeClient = remoteClusterManager.getClientForNode(node);
                 if (nodeClient != null) {
@@ -176,7 +178,7 @@ public class FailoverRoutingService implements LlmClient {
                     try {
                         ChatCompletionRequest effectiveNodeReq = request;
                         if (remoteClusterManager.getBackendRegistry() != null) {
-                            com.enterprise.llm.backend.InferenceBackendAdapter adapter = remoteClusterManager.getBackendRegistry().getAdapter(node.getEngineType());
+                            InferenceBackendAdapter adapter = remoteClusterManager.getBackendRegistry().getAdapter(node.getEngineType());
                             if (adapter != null) {
                                 effectiveNodeReq = adapter.adaptRequest(request, node);
                             }
@@ -300,7 +302,7 @@ public class FailoverRoutingService implements LlmClient {
 
         // 1. Try Remote Compute Cluster stream first if discovered and available
         if (remoteClusterManager != null && remoteClusterManager.hasActiveNodes()) {
-            com.enterprise.llm.cluster.UpstreamNode node = remoteClusterManager.selectNode(request);
+            UpstreamNode node = remoteClusterManager.selectNode(request);
             if (node != null) {
                 LlmClient nodeClient = remoteClusterManager.getClientForNode(node);
                 if (nodeClient != null) {
@@ -309,7 +311,7 @@ public class FailoverRoutingService implements LlmClient {
                     final AtomicBoolean remoteChunkReceived = new AtomicBoolean(false);
                     ChatCompletionRequest effectiveStreamReq = request;
                     if (remoteClusterManager.getBackendRegistry() != null) {
-                        com.enterprise.llm.backend.InferenceBackendAdapter adapter = remoteClusterManager.getBackendRegistry().getAdapter(node.getEngineType());
+                        InferenceBackendAdapter adapter = remoteClusterManager.getBackendRegistry().getAdapter(node.getEngineType());
                         if (adapter != null) {
                             effectiveStreamReq = adapter.adaptRequest(request, node);
                         }

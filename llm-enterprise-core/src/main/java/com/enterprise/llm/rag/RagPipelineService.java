@@ -1,17 +1,22 @@
 package com.enterprise.llm.rag;
 
+import java.util.List;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.rag.embedding.EmbeddingClient;
+import com.enterprise.llm.rag.guard.FaithfulnessResult;
+import com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator;
 import com.enterprise.llm.rag.model.SearchResult;
+import com.enterprise.llm.rag.query.ContextualQueryRewriter;
+import com.enterprise.llm.rag.query.QueryRewriter;
+import com.enterprise.llm.rag.rerank.HybridSearchReranker;
+import com.enterprise.llm.rag.rerank.Reranker;
 import com.enterprise.llm.rag.store.VectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
-import java.util.List;
 
 @Service
 public class RagPipelineService {
@@ -21,9 +26,9 @@ public class RagPipelineService {
     private final EmbeddingClient embeddingClient;
     private final VectorStore vectorStore;
     private final PromptAugmentor promptAugmentor;
-    private final com.enterprise.llm.rag.query.QueryRewriter queryRewriter;
-    private final com.enterprise.llm.rag.rerank.Reranker reranker;
-    private final com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator faithfulnessEvaluator;
+    private final QueryRewriter queryRewriter;
+    private final Reranker reranker;
+    private final RagFaithfulnessEvaluator faithfulnessEvaluator;
     private final boolean ragEnabled;
     private final int topK;
     private final double minScore;
@@ -32,9 +37,9 @@ public class RagPipelineService {
     public RagPipelineService(
             @Autowired(required = false) EmbeddingClient embeddingClient,
             @Autowired(required = false) VectorStore vectorStore,
-            @Autowired(required = false) com.enterprise.llm.rag.query.QueryRewriter queryRewriter,
-            @Autowired(required = false) com.enterprise.llm.rag.rerank.Reranker reranker,
-            @Autowired(required = false) com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator faithfulnessEvaluator,
+            @Autowired(required = false) QueryRewriter queryRewriter,
+            @Autowired(required = false) Reranker reranker,
+            @Autowired(required = false) RagFaithfulnessEvaluator faithfulnessEvaluator,
             @Value("${rag.enabled:true}") boolean ragEnabled,
             @Value("${rag.top-k:3}") int topK,
             @Value("${rag.min-score:0.5}") double minScore
@@ -42,9 +47,9 @@ public class RagPipelineService {
         this.embeddingClient = embeddingClient;
         this.vectorStore = vectorStore;
         this.promptAugmentor = new PromptAugmentor();
-        this.queryRewriter = queryRewriter != null ? queryRewriter : new com.enterprise.llm.rag.query.ContextualQueryRewriter();
-        this.reranker = reranker != null ? reranker : new com.enterprise.llm.rag.rerank.HybridSearchReranker();
-        this.faithfulnessEvaluator = faithfulnessEvaluator != null ? faithfulnessEvaluator : new com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator();
+        this.queryRewriter = queryRewriter != null ? queryRewriter : new ContextualQueryRewriter();
+        this.reranker = reranker != null ? reranker : new HybridSearchReranker();
+        this.faithfulnessEvaluator = faithfulnessEvaluator != null ? faithfulnessEvaluator : new RagFaithfulnessEvaluator();
         this.ragEnabled = ragEnabled;
         this.topK = topK;
         this.minScore = minScore;
@@ -53,8 +58,8 @@ public class RagPipelineService {
     public RagPipelineService(
             EmbeddingClient embeddingClient,
             VectorStore vectorStore,
-            com.enterprise.llm.rag.query.QueryRewriter queryRewriter,
-            com.enterprise.llm.rag.rerank.Reranker reranker,
+            QueryRewriter queryRewriter,
+            Reranker reranker,
             boolean ragEnabled,
             int topK,
             double minScore
@@ -142,14 +147,14 @@ public class RagPipelineService {
         }
     }
 
-    public com.enterprise.llm.rag.guard.FaithfulnessResult evaluateFaithfulness(List<SearchResult> chunks, String answer) {
+    public FaithfulnessResult evaluateFaithfulness(List<SearchResult> chunks, String answer) {
         if (faithfulnessEvaluator != null) {
             return faithfulnessEvaluator.evaluate(chunks, answer);
         }
-        return com.enterprise.llm.rag.guard.FaithfulnessResult.pass(1.0, answer, 0, 0, "Faithfulness guardrail not configured");
+        return FaithfulnessResult.pass(1.0, answer, 0, 0, "Faithfulness guardrail not configured");
     }
 
-    public com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator getFaithfulnessEvaluator() {
+    public RagFaithfulnessEvaluator getFaithfulnessEvaluator() {
         return faithfulnessEvaluator;
     }
 }

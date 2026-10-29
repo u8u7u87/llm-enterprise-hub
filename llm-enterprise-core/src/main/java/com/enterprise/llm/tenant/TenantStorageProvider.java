@@ -1,6 +1,7 @@
 package com.enterprise.llm.tenant;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -29,7 +30,7 @@ public interface TenantStorageProvider {
      * Batch increment used tokens for multiple tenants in a single batch operation.
      * Prevents database hot row contention in high-concurrency environments.
      */
-    default void batchIncrementUsedTokens(java.util.Map<String, Long> tokenDeltas) {
+    default void batchIncrementUsedTokens(Map<String, Long> tokenDeltas) {
         if (tokenDeltas != null) {
             tokenDeltas.forEach((id, delta) -> {
                 if (delta != null && delta > 0) {

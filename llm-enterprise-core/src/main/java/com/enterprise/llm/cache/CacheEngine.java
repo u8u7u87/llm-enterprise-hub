@@ -1,21 +1,26 @@
 package com.enterprise.llm.cache;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import com.enterprise.llm.auth.TenantSecurityContext;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
+import com.enterprise.llm.rag.embedding.EmbeddingClient;
 import com.enterprise.llm.tenant.TenantEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class CacheEngine {
@@ -23,7 +28,7 @@ public class CacheEngine {
     private static final Logger log = LoggerFactory.getLogger(CacheEngine.class);
 
     private final CacheProperties properties;
-    private final com.enterprise.llm.rag.embedding.EmbeddingClient embeddingClient;
+    private final EmbeddingClient embeddingClient;
     private final ConcurrentHashMap<String, CacheEntry> l1Map = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<CacheEntry> semanticEntries = new CopyOnWriteArrayList<>();
 
@@ -32,11 +37,11 @@ public class CacheEngine {
     private final AtomicLong misses = new AtomicLong(0);
     private final AtomicLong savedTokens = new AtomicLong(0);
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public CacheEngine(
             CacheProperties properties,
-            @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.enterprise.llm.rag.embedding.EmbeddingClient embeddingClient
+            @Autowired(required = false)
+            EmbeddingClient embeddingClient
     ) {
         this.properties = properties != null ? properties : new CacheProperties();
         this.embeddingClient = embeddingClient;

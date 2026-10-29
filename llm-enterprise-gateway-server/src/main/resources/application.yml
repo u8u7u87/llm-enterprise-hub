@@ -45,6 +45,36 @@ llm:
     api-key: "ollama"                       # 降级模型 API Key
     model: "qwen2.5:0.5b"                   # 降级模型名称
 
+  # 灰度发布：按权重把某个基础模型的流量切到候选模型 (默认关闭)
+  canary:
+    enabled: false
+    rules:
+      - base-model: "deepseek-chat"         # 基础模型（客户端请求里写的名字）
+        canary-model: "deepseek-reasoner"   # 候选模型（命中后实际发往上游的名字）
+        weight-percent: 0                   # 0 = 全量走基础模型，100 = 全量走候选模型
+        sticky-by-tenant: true              # 同租户多次请求命中结果稳定（按 tenantId 哈希分桶）
+        sticky-by-session: false            # 按 sessionId 哈希分桶（优先级高于租户）
+    overrides: []                           # 租户级强制改道：[{tenant-id, base-model, target-model}]
+
+  # 影子流量：把同步请求异步复制给候选模型做对照 (默认关闭，避免双倍推理成本)
+  shadow:
+    enabled: false
+    rules:
+      - source-model: "deepseek-chat"
+        shadow-model: "deepseek-reasoner"
+        sample-ratio: 0.0                   # 0.0 = 不采样，1.0 = 全量镜像
+
+  # 流式输出护栏：BLOCK 命中即中断；MASK 跨 Chunk 脱敏后再下发（敏感串附近晚一个 Chunk）
+  guardrail:
+    streaming:
+      mode: "BLOCK"
+      overlap-size: 64                      # 尾部分片最大扣留长度（字符）
+
+  # 双向隐私保险库：入站伪匿名化为 <PHONE_1> 等占位符，出站再还原 (默认关闭)
+  # 开启后命中 PII 的请求会跳过两级缓存
+  privacy:
+    enabled: false
+
 # ------------------------------------------------------------------------------
 # 2. 全链路双向安全护栏配置 (Prompt Guardrail, DLP, Tool Isolation)
 # ------------------------------------------------------------------------------
@@ -151,7 +181,8 @@ milvus:
 # 5. 管理员控制面与监控看板鉴权配置
 # ------------------------------------------------------------------------------
 admin:
-  secret-key: "test-admin-secret-key-12345"  # 管理员 X-Admin-Key
+  # 管理员 X-Admin-Key。生产环境必须通过环境变量注入，禁止使用仓库内的默认值。
+  secret-key: "${ADMIN_SECRET_KEY:test-admin-secret-key-12345}"
 
 # ------------------------------------------------------------------------------
 # 6. 全链路日志与 MDC 格式配置

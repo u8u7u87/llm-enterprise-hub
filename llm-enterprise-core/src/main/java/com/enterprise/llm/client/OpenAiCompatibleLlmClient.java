@@ -1,13 +1,7 @@
 package com.enterprise.llm.client;
 
-import com.enterprise.llm.model.ChatCompletionChunk;
-import com.enterprise.llm.model.ChatCompletionRequest;
-import com.enterprise.llm.model.ChatCompletionResponse;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -16,26 +10,44 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import com.enterprise.llm.cluster.ApiKeyEntry;
+import com.enterprise.llm.cluster.ApiKeyPool;
+import com.enterprise.llm.exception.LlmException;
+import com.enterprise.llm.exception.LlmRateLimitException;
+import com.enterprise.llm.exception.LlmServerException;
+import com.enterprise.llm.model.ChatCompletionChunk;
+import com.enterprise.llm.model.ChatCompletionRequest;
+import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.trace.TraceContext;
+import com.enterprise.llm.trace.TraceContextPropagator;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class OpenAiCompatibleLlmClient implements LlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleLlmClient.class);
     private static final String DONE_TOKEN = "[DONE]";
 
+    /** 上游未给出可用 Retry-After 时的默认密钥冷却时长（秒）。 */
+    private static final long DEFAULT_RETRY_AFTER_SECONDS = 60L;
+
     private final String baseUrl;
     private final String apiKey;
-    private final com.enterprise.llm.cluster.ApiKeyPool apiKeyPool;
+    private final ApiKeyPool apiKeyPool;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final ExecutorService virtualThreadExecutor;
 
-    public OpenAiCompatibleLlmClient(String baseUrl, com.enterprise.llm.cluster.ApiKeyPool apiKeyPool) {
+    public OpenAiCompatibleLlmClient(String baseUrl, ApiKeyPool apiKeyPool) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        this.apiKeyPool = apiKeyPool != null ? apiKeyPool : new com.enterprise.llm.cluster.ApiKeyPool(java.util.Collections.singletonList(""));
+        this.apiKeyPool = apiKeyPool != null ? apiKeyPool : new ApiKeyPool(Collections.singletonList(""));
         this.apiKey = this.apiKeyPool.acquireKey().getKey();
         this.virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.httpClient = HttpClient.newBuilder()
@@ -43,11 +55,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
         this.objectMapper = new ObjectMapper()
-                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
     public OpenAiCompatibleLlmClient(String baseUrl, String apiKey) {
-        this(baseUrl, com.enterprise.llm.cluster.ApiKeyPool.of(apiKey));
+        this(baseUrl, ApiKeyPool.of(apiKey));
     }
 
     @Override
@@ -57,7 +69,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
         while (attempt < maxAttempts) {
             attempt++;
-            com.enterprise.llm.cluster.ApiKeyEntry keyEntry = apiKeyPool.acquireKey();
+            ApiKeyEntry keyEntry = apiKeyPool.acquireKey();
             String currentKey = keyEntry.getKey();
 
             try {
@@ -69,18 +81,22 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8));
 
                 // Inject W3C Distributed TraceContext & X-Request-ID
-                com.enterprise.llm.trace.TraceContextPropagator.inject(reqBuilder, com.enterprise.llm.trace.TraceContext.getCurrent());
+                TraceContextPropagator.inject(reqBuilder, TraceContext.getCurrent());
 
                 HttpRequest httpRequest = reqBuilder.build();
                 HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
                 if (response.statusCode() == 429) {
-                    long retryAfterSec = 60L;
+                    long retryAfterSec = DEFAULT_RETRY_AFTER_SECONDS;
                     var header = response.headers().firstValue("Retry-After");
                     if (header.isPresent()) {
                         try {
                             retryAfterSec = Long.parseLong(header.get().trim());
-                        } catch (Exception ignored) {}
+                        } catch (NumberFormatException e) {
+                            // Retry-After 允许是 HTTP-date，此时无法换算成秒，沿用默认冷却时长
+                            log.debug("Unparsable Retry-After header [{}], falling back to {}s",
+                                    header.get(), DEFAULT_RETRY_AFTER_SECONDS);
+                        }
                     }
                     apiKeyPool.recordRateLimit(currentKey, retryAfterSec);
                     if (attempt < maxAttempts && apiKeyPool.getAvailableCount() > 0) {
@@ -96,20 +112,20 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
                 apiKeyPool.recordSuccess(currentKey);
                 return objectMapper.readValue(response.body(), ChatCompletionResponse.class);
-            } catch (com.enterprise.llm.exception.LlmRateLimitException rle) {
+            } catch (LlmRateLimitException rle) {
                 if (attempt < maxAttempts && apiKeyPool.getAvailableCount() > 0) {
                     continue;
                 }
                 throw rle;
-            } catch (com.enterprise.llm.exception.LlmException e) {
+            } catch (LlmException e) {
                 throw e;
             } catch (Exception e) {
                 log.error("Failed to execute sync chatCompletion", e);
-                throw new com.enterprise.llm.exception.LlmServerException("Chat completion failed: " + e.getMessage(), e, 500);
+                throw new LlmServerException("Chat completion failed: " + e.getMessage(), e, 500);
             }
         }
 
-        throw new com.enterprise.llm.exception.LlmRateLimitException(60, "All API keys in pool exhausted with rate-limits");
+        throw new LlmRateLimitException(60, "All API keys in pool exhausted with rate-limits");
     }
 
     @Override
@@ -128,12 +144,14 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 if (streamHolder[0] != null) {
                     streamHolder[0].close();
                 }
-            } catch (Exception ignored) {
+            } catch (IOException e) {
+                // 关闭失败说明连接已经断开或已被上游回收，取消动作本身已经生效
+                log.debug("Failed to close upstream stream during cancellation: {}", e.getMessage());
             }
         });
 
         virtualThreadExecutor.submit(() -> {
-            com.enterprise.llm.cluster.ApiKeyEntry keyEntry = apiKeyPool.acquireKey();
+            ApiKeyEntry keyEntry = apiKeyPool.acquireKey();
             String currentKey = keyEntry.getKey();
 
             try {
@@ -153,18 +171,21 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8));
 
                 // Inject W3C Distributed TraceContext & X-Request-ID
-                com.enterprise.llm.trace.TraceContextPropagator.inject(reqBuilder, com.enterprise.llm.trace.TraceContext.getCurrent());
+                TraceContextPropagator.inject(reqBuilder, TraceContext.getCurrent());
 
                 HttpRequest httpRequest = reqBuilder.build();
                 HttpResponse<InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
                 if (response.statusCode() >= 400) {
                     if (response.statusCode() == 429) {
-                        apiKeyPool.recordRateLimit(currentKey, 60);
+                        apiKeyPool.recordRateLimit(currentKey, DEFAULT_RETRY_AFTER_SECONDS);
                     }
                     String errBody = "";
                     try (InputStream is = response.body()) {
                         errBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                    } catch (Exception ignored) {}
+                    } catch (IOException e) {
+                        // 读取错误体失败不影响错误分类：仍按状态码抛出，只是少了上游原始错误详情
+                        log.debug("Failed to read error body (HTTP {}): {}", response.statusCode(), e.getMessage());
+                    }
                     onError.accept(LlmErrorParser.parse(response.statusCode(), errBody, response.headers()));
                     return;
                 }

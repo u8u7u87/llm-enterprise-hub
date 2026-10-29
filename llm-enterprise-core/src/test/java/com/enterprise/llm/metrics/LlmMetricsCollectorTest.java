@@ -49,4 +49,56 @@ class LlmMetricsCollectorTest {
         assertThat(toolCount.get()).isEqualTo(1);
         assertThat(activeDelta.get()).isEqualTo(2);
     }
+
+    @Test
+    void testCompositeIsolatesFailingCollector() {
+        AtomicInteger healthyCalls = new AtomicInteger(0);
+
+        LlmMetricsCollector broken = new LlmMetricsCollector() {
+            @Override
+            public void recordRequest(String model, String tenantId, String status, long durationMs,
+                                      Long ttftMs, Double tps, int promptTokens, int completionTokens) {
+                throw new IllegalStateException("collector is broken");
+            }
+
+            @Override
+            public void recordToolExecution(String toolName, String tenantId, String status, long durationMs) {
+                throw new IllegalStateException("collector is broken");
+            }
+
+            @Override
+            public void recordActiveRequest(String model, int delta) {
+                throw new IllegalStateException("collector is broken");
+            }
+        };
+
+        LlmMetricsCollector healthy = new LlmMetricsCollector() {
+            @Override
+            public void recordRequest(String model, String tenantId, String status, long durationMs,
+                                      Long ttftMs, Double tps, int promptTokens, int completionTokens) {
+                healthyCalls.incrementAndGet();
+            }
+
+            @Override
+            public void recordToolExecution(String toolName, String tenantId, String status, long durationMs) {
+                healthyCalls.incrementAndGet();
+            }
+
+            @Override
+            public void recordActiveRequest(String model, int delta) {
+                healthyCalls.incrementAndGet();
+            }
+        };
+
+        CompositeMetricsCollector composite = new CompositeMetricsCollector();
+        composite.addCollector(broken);
+        composite.addCollector(healthy);
+
+        // 坏掉的采集器排在前面，健康采集器仍必须收到全部事件
+        composite.recordRequest("gpt-4o", "tenant-1", "success", 100, 40L, 30.0, 50, 100);
+        composite.recordToolExecution("weather", "tenant-1", "success", 10);
+        composite.recordActiveRequest("gpt-4o", 1);
+
+        assertThat(healthyCalls.get()).isEqualTo(3);
+    }
 }

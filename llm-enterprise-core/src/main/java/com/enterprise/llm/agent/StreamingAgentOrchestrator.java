@@ -6,6 +6,7 @@ import com.enterprise.llm.model.AgentStreamEvent;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatMessage;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -151,7 +152,10 @@ public class StreamingAgentOrchestrator {
                                         argsStr = objectMapper.writeValueAsString(
                                                 tc.function() != null && tc.function().arguments() != null ? tc.function().arguments() : Map.of()
                                         );
-                                    } catch (Exception ignored) {
+                                    } catch (JsonProcessingException e) {
+                                        // 工具入参只是事件回显用的展示字段，序列化失败不应阻断工具执行
+                                        log.debug("Failed to serialize arguments of tool [{}] for event stream: {}",
+                                                toolName, e.getMessage());
                                     }
 
                                     if (onAgentEvent != null) {

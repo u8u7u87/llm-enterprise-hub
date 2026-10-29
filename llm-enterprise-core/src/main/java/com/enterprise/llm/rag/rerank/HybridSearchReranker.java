@@ -1,21 +1,21 @@
 package com.enterprise.llm.rag.rerank;
 
-import com.enterprise.llm.rag.model.SearchResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import com.enterprise.llm.rag.model.SearchResult;
 
 /**
  * Hybrid Search Reranker that combines dense vector similarity with sparse lexical matching
  * and exact code/entity boosts to eliminate low-quality chunks and context noise.
  */
 public class HybridSearchReranker implements Reranker {
-
-    private static final Logger log = LoggerFactory.getLogger(HybridSearchReranker.class);
 
     private static final Pattern CODE_ENTITY_PATTERN = Pattern.compile(
             "\\b[A-Za-z0-9_-]{3,}\\b|[《“\"'「]([^》”\"'」]+)[》”\"'」]"

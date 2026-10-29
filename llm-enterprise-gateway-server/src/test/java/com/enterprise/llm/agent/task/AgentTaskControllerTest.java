@@ -1,22 +1,20 @@
 package com.enterprise.llm.agent.task;
 
+import java.util.List;
 import com.enterprise.llm.admin.AdminProperties;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.model.Usage;
+import com.enterprise.llm.ratelimit.TenantRateLimiter;
+import com.enterprise.llm.tenant.TenantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.util.List;
-import java.util.Optional;
-
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -41,10 +39,10 @@ class AgentTaskControllerTest {
     private LlmClient primaryLlmClient;
 
     @MockBean
-    private com.enterprise.llm.tenant.TenantService tenantService;
+    private TenantService tenantService;
 
     @MockBean
-    private com.enterprise.llm.ratelimit.TenantRateLimiter tenantRateLimiter;
+    private TenantRateLimiter tenantRateLimiter;
 
     @BeforeEach
     void setUp() {

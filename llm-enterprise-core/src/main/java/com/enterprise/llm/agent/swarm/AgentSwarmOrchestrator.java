@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -193,17 +192,7 @@ public class AgentSwarmOrchestrator {
 
         // Exceeded max turns or ended
         Usage aggregatedUsage = new Usage(totalPromptTokens, totalCompletionTokens, totalPromptTokens + totalCompletionTokens);
-        if (lastResponse != null) {
-            return new ChatCompletionResponse(
-                    lastResponse.id(),
-                    lastResponse.object(),
-                    lastResponse.created(),
-                    lastResponse.model(),
-                    lastResponse.choices(),
-                    aggregatedUsage
-            );
-        }
-        return null;
+        return lastResponse != null ? lastResponse.withUsage(aggregatedUsage) : null;
     }
 
     private void ensureSystemPrompt(List<ChatMessage> conversation, String systemInstructions) {

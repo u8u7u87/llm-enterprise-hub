@@ -1,5 +1,8 @@
 package com.enterprise.llm.agent.task;
 
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import com.enterprise.llm.agent.AgentToolOrchestrator;
 import com.enterprise.llm.agent.ToolCall;
 import com.enterprise.llm.agent.ToolRegistry;
@@ -12,13 +15,7 @@ import com.enterprise.llm.model.Usage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
-
+import org.mockito.Mockito;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -108,7 +105,7 @@ class AgentTaskManagerTest {
         assertThat(suspendedTask.getHistoryJson()).contains("call_1"); // Checkpoint preserved!
 
         // 3. Resume task: network restored, model successfully finishes turn 2
-        org.mockito.Mockito.reset(mockLlmClient);
+        Mockito.reset(mockLlmClient);
         when(mockLlmClient.chatCompletion(any()))
                 .thenReturn(turn2Response);
 

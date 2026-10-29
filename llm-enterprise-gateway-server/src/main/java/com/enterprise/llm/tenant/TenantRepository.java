@@ -1,11 +1,12 @@
 package com.enterprise.llm.tenant;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
-
-import java.util.Optional;
 
 @Repository
 public class TenantRepository implements TenantStorageProvider {
@@ -76,12 +77,12 @@ public class TenantRepository implements TenantStorageProvider {
     }
 
     @Override
-    public void batchIncrementUsedTokens(java.util.Map<String, Long> tokenDeltas) {
+    public void batchIncrementUsedTokens(Map<String, Long> tokenDeltas) {
         if (tokenDeltas == null || tokenDeltas.isEmpty()) {
             return;
         }
         String sql = "UPDATE tenants SET used_tokens = used_tokens + ? WHERE id = ?";
-        java.util.List<Object[]> batchArgs = tokenDeltas.entrySet().stream()
+        List<Object[]> batchArgs = tokenDeltas.entrySet().stream()
                 .filter(e -> e.getKey() != null && e.getValue() != null && e.getValue() > 0)
                 .map(e -> new Object[]{e.getValue(), e.getKey()})
                 .toList();
@@ -91,7 +92,7 @@ public class TenantRepository implements TenantStorageProvider {
         }
     }
 
-    public java.util.List<TenantEntity> findAll() {
+    public List<TenantEntity> findAll() {
         return jdbcTemplate.query("SELECT * FROM tenants ORDER BY created_at DESC", rowMapper);
     }
 

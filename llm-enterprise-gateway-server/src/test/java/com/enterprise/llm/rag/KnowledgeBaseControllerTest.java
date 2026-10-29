@@ -1,6 +1,5 @@
 package com.enterprise.llm.rag;
 
-import com.enterprise.llm.auth.ApiKeyAuthenticationFilter;
 import com.enterprise.llm.rag.embedding.EmbeddingClient;
 import com.enterprise.llm.rag.model.SearchResult;
 import com.enterprise.llm.rag.store.VectorStore;

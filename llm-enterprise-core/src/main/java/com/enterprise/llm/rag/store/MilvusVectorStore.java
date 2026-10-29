@@ -1,5 +1,18 @@
 package com.enterprise.llm.rag.store;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import com.enterprise.llm.rag.model.DocumentChunk;
 import com.enterprise.llm.rag.model.SearchResult;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -9,15 +22,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * MilvusVectorStore connects to Milvus Vector Database via Milvus v2 RESTful API.
@@ -227,27 +231,7 @@ public class MilvusVectorStore implements VectorStore {
         if (!isMilvusEnabled()) {
             return;
         }
-
-        try {
-            String filterExpr = "tenant_id == \"" + tenantId + "\" and doc_name == \"" + docName + "\"";
-            Map<String, Object> body = Map.of(
-                    "collectionName", this.collectionName,
-                    "filter", filterExpr
-            );
-
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(milvusEndpoint + "/v2/vectordb/entities/delete"))
-                    .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(5))
-                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8));
-
-            if (!apiKey.isBlank()) {
-                reqBuilder.header("Authorization", "Bearer " + apiKey);
-            }
-
-            httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.discarding());
-        } catch (Exception ignored) {
-        }
+        deleteEntities("tenant_id == \"" + tenantId + "\" and doc_name == \"" + docName + "\"");
     }
 
     @Override
@@ -260,9 +244,17 @@ public class MilvusVectorStore implements VectorStore {
         if (!isMilvusEnabled()) {
             return;
         }
+        deleteEntities("tenant_id == \"" + tenantId + "\"");
+    }
 
+    /**
+     * 向 Milvus 发起按表达式删除。
+     *
+     * <p>删除属于尽力而为的清理动作：内存索引已经先行更新，Milvus 侧失败不应让调用方误判为删除失败，
+     * 因此只记录告警，不向上抛出。
+     */
+    private void deleteEntities(String filterExpr) {
         try {
-            String filterExpr = "tenant_id == \"" + tenantId + "\"";
             Map<String, Object> body = Map.of(
                     "collectionName", this.collectionName,
                     "filter", filterExpr
@@ -279,7 +271,11 @@ public class MilvusVectorStore implements VectorStore {
             }
 
             httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.discarding());
-        } catch (Exception ignored) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Milvus entity delete interrupted for filter [{}]", filterExpr);
+        } catch (IOException | IllegalArgumentException e) {
+            log.warn("Milvus entity delete failed for filter [{}]: {}", filterExpr, e.getMessage());
         }
     }
 

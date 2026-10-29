@@ -23,7 +23,7 @@ import java.util.function.Consumer;
  * 投机对冲竞速路由引擎 (Request Hedging / Speculative Racing)
  * 当主模型在 hedgingDelayMs 内未返回响应或首字时，自动在虚拟线程中并行触发备用模型对冲，先出结果者胜出并取消另一路。
  */
-public class RequestHedgingRouter {
+public class RequestHedgingRouter implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(RequestHedgingRouter.class);
 
@@ -32,11 +32,8 @@ public class RequestHedgingRouter {
     private final String fallbackModel;
     private final long hedgingDelayMs;
 
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "hedging-scheduler");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
+            Thread.ofPlatform().daemon().name("hedging-scheduler").factory());
 
     public RequestHedgingRouter(
             LlmClient primaryClient,
@@ -200,5 +197,16 @@ public class RequestHedgingRouter {
                 request.tools(),
                 request.toolChoice()
         );
+    }
+
+    /**
+     * 释放对冲调度线程。
+     *
+     * <p>{@code scheduler} 是实例级线程池，线程虽为 daemon（不会阻止 JVM 退出），
+     * 但实例被反复创建时每个实例都会常驻一条空闲线程，因此持有方必须调用本方法收尾。
+     */
+    @Override
+    public void close() {
+        scheduler.shutdownNow();
     }
 }

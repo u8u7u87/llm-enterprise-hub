@@ -1,10 +1,18 @@
 package com.enterprise.llm.agent;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.guard.CrossTenantViolationException;
 import com.enterprise.llm.guard.SecurityViolationException;
 import com.enterprise.llm.guard.ToolAction;
 import com.enterprise.llm.guard.ToolActionGatekeeper;
+import com.enterprise.llm.metrics.LlmMetricsCollector;
+import com.enterprise.llm.metrics.NoOpMetricsCollector;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
@@ -14,11 +22,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
 @Service
 public class AgentToolOrchestrator {
 
@@ -27,7 +30,7 @@ public class AgentToolOrchestrator {
 
     private final ToolRegistry toolRegistry;
     private final ToolActionGatekeeper toolActionGatekeeper;
-    private com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector = com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
+    private LlmMetricsCollector metricsCollector = NoOpMetricsCollector.INSTANCE;
 
     @Autowired
     public AgentToolOrchestrator(ToolRegistry toolRegistry, ToolActionGatekeeper toolActionGatekeeper) {
@@ -44,13 +47,13 @@ public class AgentToolOrchestrator {
     }
 
     @Autowired(required = false)
-    public void setMetricsCollector(com.enterprise.llm.metrics.LlmMetricsCollector metricsCollector) {
+    public void setMetricsCollector(LlmMetricsCollector metricsCollector) {
         if (metricsCollector != null) {
             this.metricsCollector = metricsCollector;
         }
     }
 
-    public com.enterprise.llm.metrics.LlmMetricsCollector getMetricsCollector() {
+    public LlmMetricsCollector getMetricsCollector() {
         return metricsCollector;
     }
 
@@ -148,11 +151,11 @@ public class AgentToolOrchestrator {
             if (toolCalls.size() == 1) {
                 conversationHistory.add(executeSingleToolCall(toolCalls.get(0), tenantId));
             } else {
-                try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-                    List<java.util.concurrent.CompletableFuture<ChatMessage>> futures = toolCalls.stream()
-                            .map(tc -> java.util.concurrent.CompletableFuture.supplyAsync(() -> executeSingleToolCall(tc, tenantId), executor))
+                try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                    List<CompletableFuture<ChatMessage>> futures = toolCalls.stream()
+                            .map(tc -> CompletableFuture.supplyAsync(() -> executeSingleToolCall(tc, tenantId), executor))
                             .toList();
-                    java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
                     for (var f : futures) {
                         conversationHistory.add(f.join());
                     }
@@ -167,17 +170,7 @@ public class AgentToolOrchestrator {
 
         // Aggregate total tokens into final response usage
         Usage aggregatedUsage = new Usage(totalPromptTokens, totalCompletionTokens, totalPromptTokens + totalCompletionTokens);
-        if (lastResponse != null) {
-            return new ChatCompletionResponse(
-                    lastResponse.id(),
-                    lastResponse.object(),
-                    lastResponse.created(),
-                    lastResponse.model(),
-                    lastResponse.choices(),
-                    aggregatedUsage
-            );
-        }
-        return null;
+        return lastResponse != null ? lastResponse.withUsage(aggregatedUsage) : null;
     }
 
     public ChatCompletionResponse runLoop(LlmClient llmClient, ChatCompletionRequest initialRequest, String tenantId) {
@@ -230,7 +223,9 @@ public class AgentToolOrchestrator {
             if (metricsCollector != null) {
                 try {
                     metricsCollector.recordToolExecution(toolName, tenantId, status, System.currentTimeMillis() - startTime);
-                } catch (Throwable ignored) {
+                } catch (RuntimeException | Error e) {
+                    // 埋点属于旁路能力：工具已经执行完毕，指标上报失败不能把结果吞掉
+                    log.debug("Failed to record tool execution metric for '{}'", toolName, e);
                 }
             }
         }

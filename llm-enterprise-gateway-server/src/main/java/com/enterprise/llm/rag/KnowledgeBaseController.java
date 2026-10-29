@@ -1,6 +1,11 @@
 package com.enterprise.llm.rag;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import com.enterprise.llm.auth.TenantSecurityContext;
+import com.enterprise.llm.rag.chunk.MarkdownStructureChunker;
 import com.enterprise.llm.rag.chunk.TextChunker;
 import com.enterprise.llm.rag.embedding.EmbeddingClient;
 import com.enterprise.llm.rag.model.DocumentChunk;
@@ -10,12 +15,12 @@ import com.enterprise.llm.tenant.TenantEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/v1/knowledge")
@@ -62,9 +67,9 @@ public class KnowledgeBaseController {
 
         List<DocumentChunk> rawChunks;
         if (req.docName().endsWith(".md") || req.content().contains("# ") || req.content().contains("|---") || req.content().contains("| :---")) {
-            com.enterprise.llm.rag.chunk.MarkdownStructureChunker mdChunker = (req.chunkSize() != null && req.chunkOverlap() != null)
-                    ? new com.enterprise.llm.rag.chunk.MarkdownStructureChunker(req.chunkSize(), req.chunkOverlap())
-                    : new com.enterprise.llm.rag.chunk.MarkdownStructureChunker();
+            MarkdownStructureChunker mdChunker = (req.chunkSize() != null && req.chunkOverlap() != null)
+                    ? new MarkdownStructureChunker(req.chunkSize(), req.chunkOverlap())
+                    : new MarkdownStructureChunker();
             rawChunks = mdChunker.chunk(req.content(), tenantId, req.docName());
         } else {
             TextChunker chunker = (req.chunkSize() != null && req.chunkOverlap() != null)

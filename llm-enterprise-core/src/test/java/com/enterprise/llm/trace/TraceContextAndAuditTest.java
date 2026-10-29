@@ -1,12 +1,12 @@
 package com.enterprise.llm.trace;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import com.enterprise.llm.metrics.LlmMetricsCollector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
-
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TraceContextAndAuditTest {
@@ -60,10 +60,10 @@ class TraceContextAndAuditTest {
     @Test
     @DisplayName("Verify LlmSpan triggers metrics collector on start and finish")
     void testLlmSpanMetricsTrigger() {
-        java.util.concurrent.atomic.AtomicInteger activeCount = new java.util.concurrent.atomic.AtomicInteger(0);
-        java.util.concurrent.atomic.AtomicBoolean recorded = new java.util.concurrent.atomic.AtomicBoolean(false);
+        AtomicInteger activeCount = new AtomicInteger(0);
+        AtomicBoolean recorded = new AtomicBoolean(false);
 
-        com.enterprise.llm.metrics.LlmMetricsCollector mockCollector = new com.enterprise.llm.metrics.LlmMetricsCollector() {
+        LlmMetricsCollector mockCollector = new LlmMetricsCollector() {
             @Override
             public void recordRequest(String model, String tenantId, String status, long durationMs, Long ttftMs, Double tps, int promptTokens, int completionTokens) {
                 if ("deepseek-chat".equals(model) && "tenant-9".equals(tenantId) && "success".equals(status)) {

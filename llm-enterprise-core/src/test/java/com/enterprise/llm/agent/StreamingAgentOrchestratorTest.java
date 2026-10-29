@@ -1,23 +1,23 @@
 package com.enterprise.llm.agent;
 
-import com.enterprise.llm.client.LlmClient;
-import com.enterprise.llm.client.StreamCancellationHandle;
-import com.enterprise.llm.guard.ToolActionGatekeeper;
-import com.enterprise.llm.model.AgentStreamEvent;
-import com.enterprise.llm.model.ChatCompletionChunk;
-import com.enterprise.llm.model.ChatCompletionRequest;
-import com.enterprise.llm.model.ChatMessage;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
+import java.util.function.Consumer;
+import com.enterprise.llm.client.LlmClient;
+import com.enterprise.llm.client.StreamCancellationHandle;
+import com.enterprise.llm.guard.ToolActionGatekeeper;
+import com.enterprise.llm.model.AgentStreamEvent;
+import com.enterprise.llm.model.ChatCompletionChunk;
+import com.enterprise.llm.model.ChatCompletionRequest;
+import com.enterprise.llm.model.ChatCompletionResponse;
+import com.enterprise.llm.model.ChatMessage;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class StreamingAgentOrchestratorTest {
@@ -46,16 +46,16 @@ class StreamingAgentOrchestratorTest {
 
         LlmClient mockClient = new LlmClient() {
             @Override
-            public com.enterprise.llm.model.ChatCompletionResponse chatCompletion(ChatCompletionRequest request) {
+            public ChatCompletionResponse chatCompletion(ChatCompletionRequest request) {
                 return null;
             }
 
             @Override
             public StreamCancellationHandle streamChatCompletion(
                     ChatCompletionRequest request,
-                    java.util.function.Consumer<ChatCompletionChunk> onChunk,
+                    Consumer<ChatCompletionChunk> onChunk,
                     Runnable onComplete,
-                    java.util.function.Consumer<Throwable> onError
+                    Consumer<Throwable> onError
             ) {
                 onChunk.accept(new ChatCompletionChunk(
                         "c-1", "chat.completion.chunk", 1000L, "gpt-4",
@@ -107,16 +107,16 @@ class StreamingAgentOrchestratorTest {
             private int turn = 0;
 
             @Override
-            public com.enterprise.llm.model.ChatCompletionResponse chatCompletion(ChatCompletionRequest request) {
+            public ChatCompletionResponse chatCompletion(ChatCompletionRequest request) {
                 return null;
             }
 
             @Override
             public StreamCancellationHandle streamChatCompletion(
                     ChatCompletionRequest request,
-                    java.util.function.Consumer<ChatCompletionChunk> onChunk,
+                    Consumer<ChatCompletionChunk> onChunk,
                     Runnable onComplete,
-                    java.util.function.Consumer<Throwable> onError
+                    Consumer<Throwable> onError
             ) {
                 turn++;
                 if (turn == 1) {

@@ -1,8 +1,6 @@
 package com.enterprise.llm.e2e;
 
-import com.enterprise.llm.agent.AgentToolOrchestrator;
 import com.enterprise.llm.agent.ToolCall;
-import com.enterprise.llm.agent.ToolDefinition;
 import com.enterprise.llm.agent.ToolRegistry;
 import com.enterprise.llm.agent.task.AgentTaskEntity;
 import com.enterprise.llm.agent.task.AgentTaskManager;
@@ -37,13 +35,11 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

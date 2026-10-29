@@ -1,5 +1,9 @@
 package com.enterprise.llm.auth;
 
+import java.io.IOException;
+import java.util.Optional;
+import com.enterprise.llm.ratelimit.RateLimitResult;
+import com.enterprise.llm.ratelimit.TenantRateLimiter;
 import com.enterprise.llm.tenant.TenantEntity;
 import com.enterprise.llm.tenant.TenantService;
 import com.enterprise.llm.trace.TraceContext;
@@ -11,17 +15,14 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
-import java.util.Optional;
-
 @Component
 @Order(1)
 public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     private final TenantService tenantService;
-    private final com.enterprise.llm.ratelimit.TenantRateLimiter rateLimiter;
+    private final TenantRateLimiter rateLimiter;
 
-    public ApiKeyAuthenticationFilter(TenantService tenantService, com.enterprise.llm.ratelimit.TenantRateLimiter rateLimiter) {
+    public ApiKeyAuthenticationFilter(TenantService tenantService, TenantRateLimiter rateLimiter) {
         this.tenantService = tenantService;
         this.rateLimiter = rateLimiter;
     }
@@ -74,7 +75,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        com.enterprise.llm.ratelimit.RateLimitResult rateResult = rateLimiter.tryAcquireDetailed(tenant, 0);
+        RateLimitResult rateResult = rateLimiter.tryAcquireDetailed(tenant, 0);
         if (rateResult != null) {
             if (!rateResult.allowed()) {
                 response.setHeader("Retry-After", String.valueOf(Math.max(1, rateResult.retryAfterMs() / 1000)));

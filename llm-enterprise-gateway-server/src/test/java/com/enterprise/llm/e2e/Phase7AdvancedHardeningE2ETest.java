@@ -1,18 +1,21 @@
 package com.enterprise.llm.e2e;
 
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import com.enterprise.llm.client.LlmClient;
+import com.enterprise.llm.client.StreamCancellationHandle;
 import com.enterprise.llm.cost.CostCalculator;
-import com.enterprise.llm.cost.ModelPricing;
 import com.enterprise.llm.cost.ModelPricingRegistry;
 import com.enterprise.llm.cost.TenantBudgetExceededException;
 import com.enterprise.llm.cost.TenantBudgetManager;
-import com.enterprise.llm.guard.StreamingGuardrailException;
 import com.enterprise.llm.guard.StreamingOutputGuardrail;
 import com.enterprise.llm.model.ChatCompletionChunk;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.model.Usage;
+import com.enterprise.llm.quota.QuotaReservation;
 import com.enterprise.llm.router.FailoverRoutingService;
 import com.enterprise.llm.router.ModelAliasRegistry;
 import com.enterprise.llm.service.ChatExecutionService;
@@ -20,11 +23,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -62,7 +60,7 @@ class Phase7AdvancedHardeningE2ETest {
             }
 
             @Override
-            public com.enterprise.llm.client.StreamCancellationHandle streamChatCompletion(
+            public StreamCancellationHandle streamChatCompletion(
                     ChatCompletionRequest request,
                     Consumer<ChatCompletionChunk> onChunk,
                     Runnable onComplete,
@@ -85,7 +83,8 @@ class Phase7AdvancedHardeningE2ETest {
                 null,
                 costCalculator,
                 budgetManager,
-                streamingGuardrail
+                streamingGuardrail,
+                null
         );
 
         String tenantId = "tenant-ai-corp";
@@ -99,11 +98,11 @@ class Phase7AdvancedHardeningE2ETest {
                 0.7
         );
 
-        executionService.executeSync(request, com.enterprise.llm.quota.QuotaReservation.of(tenantId, 1000));
+        executionService.executeSync(request, QuotaReservation.of(tenantId, 1000));
         assertThat(budgetManager.getSpentAmount(tenantId)).isEqualTo(0.750000);
 
         // Next request should be blocked immediately before calling LLM
-        assertThatThrownBy(() -> executionService.executeSync(request, com.enterprise.llm.quota.QuotaReservation.of(tenantId, 1000)))
+        assertThatThrownBy(() -> executionService.executeSync(request, QuotaReservation.of(tenantId, 1000)))
                 .isInstanceOf(TenantBudgetExceededException.class)
                 .hasMessageContaining("has exceeded financial budget limit");
     }
@@ -121,7 +120,7 @@ class Phase7AdvancedHardeningE2ETest {
             }
 
             @Override
-            public com.enterprise.llm.client.StreamCancellationHandle streamChatCompletion(
+            public StreamCancellationHandle streamChatCompletion(
                     ChatCompletionRequest request,
                     Consumer<ChatCompletionChunk> onChunk,
                     Runnable onComplete,
@@ -144,7 +143,7 @@ class Phase7AdvancedHardeningE2ETest {
                     streamFailed.set(true);
                     onError.accept(t);
                 }
-                return new com.enterprise.llm.client.StreamCancellationHandle(() -> {});
+                return new StreamCancellationHandle(() -> {});
             }
         };
 
@@ -163,7 +162,8 @@ class Phase7AdvancedHardeningE2ETest {
                 null,
                 costCalculator,
                 budgetManager,
-                streamingGuardrail
+                streamingGuardrail,
+                null
         );
 
         ChatCompletionRequest request = new ChatCompletionRequest(

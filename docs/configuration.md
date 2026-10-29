@@ -37,7 +37,11 @@ LLM Enterprise Hub 的配置遵循 Spring Boot 标准体系，支持 `applicatio
 | `llm.cluster.dns-discovery` | `LLM_CLUSTER_DNS_DISCOVERY` | `""` | K8s Headless Service 域名 |
 | `milvus.endpoint` | `MILVUS_ENDPOINT` | `http://127.0.0.1:19530` | Milvus 2.x 向量数据库端点 |
 | `milvus.api-key` | `MILVUS_API_KEY` | `""` | Milvus 鉴权 Token (可选) |
-| `admin.secret-key` | `ADMIN_SECRET_KEY` | `test-admin-secret-key-12345` | 管理员控制面与监控看板鉴权密钥 |
+| `admin.secret-key` | `ADMIN_SECRET_KEY` | `test-admin-secret-key-12345`（仅本地开发） | 管理员控制面与监控看板鉴权密钥，**生产必须显式注入** |
+| `llm.canary.enabled` | `LLM_CANARY_ENABLED` | `false` | Canary 灰度切流总开关 |
+| `llm.shadow.enabled` | `LLM_SHADOW_ENABLED` | `false` | 影子流量镜像总开关 |
+| `llm.privacy.enabled` | `LLM_PRIVACY_ENABLED` | `false` | 双向隐私保险库总开关 |
+| `llm.guardrail.streaming.mode` | `LLM_GUARDRAIL_STREAMING_MODE` | `BLOCK` | 流式输出护栏模式 (`BLOCK` / `MASK`) |
 
 ---
 
@@ -104,28 +108,44 @@ llm:
 
 ---
 
-### 3. 流量路由治理 (Canary 灰度 / 影子流量 / 投机对冲)
+### 3. 流量路由治理 (Canary 灰度 / 影子流量 / 流式护栏 / 隐私保险库)
 
 ```yaml
 llm:
-  # Canary 百分比灰度切流
+  # Canary 百分比灰度切流（默认关闭；规则在启动时注册进 CanaryRoutingService）
+  # 命中改道时响应头会回写 X-Hub-Routed-Model
   canary:
     enabled: false
-    canary-model: "deepseek-r1"              # 候选新模型
-    weight-percent: 10                       # 灰度流量比例 (0 ~ 100)
-    sticky-by-session: true                  # 会话一致性哈希，同会话锁定同一模型
-    sticky-by-tenant: false                  # 按租户维度锁定
-    tenant-overrides:                        # 强制 100% 切流至灰度模型的租户白名单
-      - "tenant-qa-internal"
+    rules:
+      - base-model: "deepseek-chat"          # 客户端请求里的模型名
+        canary-model: "deepseek-reasoner"    # 命中后实际发往上游的模型名
+        weight-percent: 10                   # 灰度流量比例 (0 ~ 100)
+        sticky-by-tenant: true               # 按 tenantId 哈希分桶，同租户结果稳定
+        sticky-by-session: false             # 按 sessionId 哈希分桶（优先级更高）
+    overrides:                               # 租户级强制改道白名单
+      - tenant-id: "tenant-qa-internal"
+        base-model: "deepseek-chat"
+        target-model: "deepseek-reasoner"
 
-  # 生产级影子流量镜像 (Shadow Traffic Mirroring)
+  # 生产级影子流量镜像（默认关闭；仅同步链路；不占租户配额；失败不影响主链路）
   shadow:
-    enabled: false                           # 影子流量开关
-    shadow-model: "qwen2.5:72b"              # 镜像接收模型
-    sample-rate: 0.2                         # 采样率 (0.0 ~ 1.0)
-    audit-log-enabled: true                  # 记录主备生成耗时与效果对比日志
+    enabled: false
+    rules:
+      - source-model: "deepseek-chat"        # 被镜像的模型
+        shadow-model: "qwen2.5:72b"          # 影子模型
+        sample-ratio: 0.2                    # 采样率 (0.0 ~ 1.0)，0 表示不镜像
 
-  # 低延迟投机对冲竞速路由 (Request Hedging)
+  # 流式输出护栏：BLOCK 命中即中断；MASK 先掩码再切分，敏感串附近延迟一个 Chunk
+  guardrail:
+    streaming:
+      mode: "BLOCK"
+      overlap-size: 64                       # 尾部分片最大扣留长度（字符）
+
+  # 双向隐私保险库（默认关闭；命中 PII 的请求会跳过两级缓存）
+  privacy:
+    enabled: false
+
+  # 低延迟投机对冲竞速路由（预留：RequestHedgingRouter 尚未接入请求链路）
   hedging:
     enabled: false
     delay-window-ms: 1500                    # 主模型未吐出首字的竞速超时时间 (毫秒)
@@ -144,9 +164,10 @@ llm:
       flush-interval-ms: 200                 # 批次合并刷盘时间间隔 (毫秒)
       batch-size: 100                        # 单次批处理更新最大条目数
 
-    # 分布式 Token 租约限流 (Redis Lua 脚本原子预占)
+    # 分布式 Token 租约限流（预留：Redis 客户端尚未引入，当前为进程内实现）
+    # 该配置块目前不会被任何组件读取，多 Pod 部署前需先完成 Redis 适配器接入
     distributed:
-      enabled: false                         # 生产多 Pod 部署时开启
+      enabled: false
       redis-url: "redis://localhost:6379"
 
   # 默认全局限流阈值 (各租户可通过 DB 自定义覆盖)
@@ -219,7 +240,7 @@ security:
   # 流式敏感数据实时在线滑动窗口拦截
   streaming:
     mode: "BLOCK"                            # 拦截动作: BLOCK (熔断抛错) 或 MASK (掩码替换)
-    overlap-size: 64                         # 跨 Chunk 环形滑动窗口重叠字符宽度
+    overlap-size: 64                         # 尾部分片最大扣留长度（字符），防止超长 token 拖死流
 ```
 
 ---
@@ -275,7 +296,8 @@ llm:
 
 ```yaml
 admin:
-  secret-key: "test-admin-secret-key-12345"  # 管理员鉴权密钥
+  # 生产环境必须通过环境变量注入，仓库内默认值仅供本地开发
+  secret-key: "${ADMIN_SECRET_KEY:test-admin-secret-key-12345}"
 
 logging:
   pattern:

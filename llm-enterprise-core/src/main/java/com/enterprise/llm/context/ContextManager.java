@@ -1,5 +1,8 @@
 package com.enterprise.llm.context;
 
+import java.util.ArrayList;
+import java.util.List;
+import com.enterprise.llm.memory.WorkingMemoryManager;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.token.TokenEstimator;
@@ -7,9 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
-import java.util.ArrayList;
-import java.util.List;
 
 @Service
 public class ContextManager {
@@ -19,14 +19,14 @@ public class ContextManager {
     private final ContextBudgetProperties properties;
     private final TokenEstimator tokenEstimator;
     private final ContextDistiller contextDistiller;
-    private final com.enterprise.llm.memory.WorkingMemoryManager workingMemoryManager;
+    private final WorkingMemoryManager workingMemoryManager;
 
     @Autowired
     public ContextManager(
             ContextBudgetProperties properties,
             TokenEstimator tokenEstimator,
             ContextDistiller contextDistiller,
-            @Autowired(required = false) com.enterprise.llm.memory.WorkingMemoryManager workingMemoryManager
+            @Autowired(required = false) WorkingMemoryManager workingMemoryManager
     ) {
         this.properties = properties != null ? properties : new ContextBudgetProperties();
         this.tokenEstimator = tokenEstimator != null ? tokenEstimator : new TokenEstimator();

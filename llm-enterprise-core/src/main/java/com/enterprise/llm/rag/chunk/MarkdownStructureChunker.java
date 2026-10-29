@@ -1,10 +1,12 @@
 package com.enterprise.llm.rag.chunk;
 
-import com.enterprise.llm.rag.model.DocumentChunk;
-
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.enterprise.llm.rag.model.DocumentChunk;
 
 /**
  * Markdown-aware structural chunker that preserves document hierarchy (H1/H2/H3 breadcrumbs),

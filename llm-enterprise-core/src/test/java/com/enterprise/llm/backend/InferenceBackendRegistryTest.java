@@ -1,14 +1,15 @@
 package com.enterprise.llm.backend;
 
-import com.enterprise.llm.backend.adapter.*;
+import java.net.http.HttpClient;
+import com.enterprise.llm.backend.adapter.DirectInferenceAdapter;
+import com.enterprise.llm.backend.adapter.RayServeInferenceAdapter;
+import com.enterprise.llm.backend.adapter.SglangInferenceAdapter;
+import com.enterprise.llm.backend.adapter.TritonInferenceAdapter;
+import com.enterprise.llm.backend.adapter.VllmInferenceAdapter;
 import com.enterprise.llm.cluster.UpstreamNode;
 import com.enterprise.llm.cluster.lb.ClusterLoadBalancer;
 import com.enterprise.llm.cluster.lb.RoundRobinLoadBalancer;
 import org.junit.jupiter.api.Test;
-
-import java.net.http.HttpClient;
-import java.util.Collections;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 class InferenceBackendRegistryTest {

@@ -1,11 +1,14 @@
 package com.enterprise.llm.backend;
 
-import com.enterprise.llm.backend.adapter.*;
+import com.enterprise.llm.backend.adapter.DirectInferenceAdapter;
+import com.enterprise.llm.backend.adapter.RayServeInferenceAdapter;
+import com.enterprise.llm.backend.adapter.SglangInferenceAdapter;
+import com.enterprise.llm.backend.adapter.TritonInferenceAdapter;
+import com.enterprise.llm.backend.adapter.VllmInferenceAdapter;
 import com.enterprise.llm.cluster.UpstreamNode;
 import com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer;
 import com.enterprise.llm.cluster.lb.PrefixHashLoadBalancer;
 import org.junit.jupiter.api.Test;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 class EngineAdaptersTest {

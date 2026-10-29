@@ -1,11 +1,11 @@
 package com.enterprise.llm.guard.prompt;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
-
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 @Component
 public class PropertiesPromptRuleProvider implements PromptRuleProvider {
@@ -35,7 +35,7 @@ public class PropertiesPromptRuleProvider implements PromptRuleProvider {
                         return null;
                     }
                 })
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .toList();
     }
 

@@ -1,14 +1,13 @@
 package com.enterprise.llm.resilience;
 
-import com.enterprise.llm.exception.LlmAuthenticationException;
-import com.enterprise.llm.exception.LlmContentFilterException;
-import com.enterprise.llm.exception.LlmInvalidRequestException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.util.concurrent.ThreadLocalRandom;
+import com.enterprise.llm.exception.LlmAuthenticationException;
+import com.enterprise.llm.exception.LlmContentFilterException;
+import com.enterprise.llm.exception.LlmException;
+import com.enterprise.llm.exception.LlmInvalidRequestException;
+import com.enterprise.llm.exception.LlmRateLimitException;
+import org.springframework.stereotype.Component;
 
 /**
  * Enterprise Adaptive Jittered Retry Policy.
@@ -17,8 +16,6 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 @Component
 public class AdaptiveJitteredRetryPolicy {
-
-    private static final Logger log = LoggerFactory.getLogger(AdaptiveJitteredRetryPolicy.class);
 
     public enum JitterStrategy {
         FULL_JITTER,
@@ -58,13 +55,13 @@ public class AdaptiveJitteredRetryPolicy {
         }
 
         // Rate limit, connection timeout, network errors are retriable
-        if (t instanceof com.enterprise.llm.exception.LlmRateLimitException
+        if (t instanceof LlmRateLimitException
                 || t instanceof IOException) {
             return true;
         }
 
         // Generic LlmException retryable check
-        if (t instanceof com.enterprise.llm.exception.LlmException llmEx) {
+        if (t instanceof LlmException llmEx) {
             return llmEx.isRetryable();
         }
 

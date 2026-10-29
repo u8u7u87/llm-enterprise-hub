@@ -1,15 +1,5 @@
 package com.enterprise.llm.session;
 
-import com.enterprise.llm.agent.ToolCall;
-import com.enterprise.llm.model.ChatMessage;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.EmptyResultDataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
-
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -17,6 +7,18 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantLock;
+import com.enterprise.llm.agent.ToolCall;
+import com.enterprise.llm.model.ChatMessage;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
 
 @Repository
 public class SqliteSessionStorageProvider implements SessionStorageProvider {
@@ -25,14 +27,14 @@ public class SqliteSessionStorageProvider implements SessionStorageProvider {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-    private final java.util.concurrent.locks.ReentrantLock writeLock = new java.util.concurrent.locks.ReentrantLock();
+    private final ReentrantLock writeLock = new ReentrantLock();
 
     public SqliteSessionStorageProvider(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = new ObjectMapper();
     }
 
-    @jakarta.annotation.PostConstruct
+    @PostConstruct
     public void initPragmas() {
         try {
             jdbcTemplate.execute("PRAGMA journal_mode = WAL;");
@@ -174,7 +176,11 @@ public class SqliteSessionStorageProvider implements SessionStorageProvider {
             if (metaJson != null && !metaJson.isBlank()) {
                 try {
                     metadata = objectMapper.readValue(metaJson, new TypeReference<Map<String, String>>() {});
-                } catch (Exception ignored) {}
+                } catch (JsonProcessingException e) {
+                    // 历史数据里的 metadata 可能是旧版本写入的非法 JSON；
+                    // 单行脏数据不应让整个会话列表查询失败，降级为空 metadata
+                    log.warn("Ignoring malformed session metadata JSON: {}", e.getOriginalMessage());
+                }
             }
             Timestamp crTs = rs.getTimestamp("created_at");
             Timestamp upTs = rs.getTimestamp("updated_at");

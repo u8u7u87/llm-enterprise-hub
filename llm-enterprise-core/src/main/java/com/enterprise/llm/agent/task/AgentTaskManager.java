@@ -1,11 +1,11 @@
 package com.enterprise.llm.agent.task;
 
 import com.enterprise.llm.agent.AgentToolOrchestrator;
-import com.enterprise.llm.agent.ToolRegistry;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.model.ChatCompletionRequest;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -97,7 +97,9 @@ public class AgentTaskManager {
                         task.setCurrentIteration(currentIter);
                         try {
                             task.setHistoryJson(objectMapper.writeValueAsString(updatedHistory));
-                        } catch (Exception ignored) {
+                        } catch (JsonProcessingException e) {
+                            // 历史快照只用于断点续跑；序列化失败时保留上一份快照，不中断正在执行的任务
+                            log.warn("Failed to persist history snapshot for task [{}]: {}", task.getTaskId(), e.getMessage());
                         }
                         taskRepository.save(task);
                     }

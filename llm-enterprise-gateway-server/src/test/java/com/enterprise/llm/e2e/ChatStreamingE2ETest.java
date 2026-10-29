@@ -1,7 +1,10 @@
 package com.enterprise.llm.e2e;
 
+import java.io.IOException;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.client.OpenAiCompatibleLlmClient;
+import com.enterprise.llm.tenant.TenantEntity;
+import com.enterprise.llm.tenant.TenantService;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import org.junit.jupiter.api.AfterAll;
@@ -18,9 +21,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-
-import java.io.IOException;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {"spring.main.allow-bean-definition-overriding=true"})
@@ -35,7 +35,7 @@ class ChatStreamingE2ETest {
     private TestRestTemplate restTemplate;
 
     @Autowired
-    private com.enterprise.llm.tenant.TenantService tenantService;
+    private TenantService tenantService;
 
     @TestConfiguration
     static class TestConfig {
@@ -66,7 +66,7 @@ class ChatStreamingE2ETest {
 
     @Test
     void shouldExecuteSyncCompletionEndToEnd() {
-        tenantService.registerTenant(new com.enterprise.llm.tenant.TenantEntity(
+        tenantService.registerTenant(new TenantEntity(
                 "e2e-tenant-1", "E2E Corp", "sk-e2e-valid-key", 20, 100000, 0, true
         ));
 
@@ -121,7 +121,7 @@ class ChatStreamingE2ETest {
 
     @Test
     void shouldExecuteStreamingCompletionEndToEnd() {
-        tenantService.registerTenant(new com.enterprise.llm.tenant.TenantEntity(
+        tenantService.registerTenant(new TenantEntity(
                 "e2e-tenant-1", "E2E Corp", "sk-e2e-valid-key", 20, 100000, 0, true
         ));
 

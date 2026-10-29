@@ -44,10 +44,11 @@
 
 ## 2. 生产级三层租户配额与财务治理体系
 
-### 2.1 分布式 Token 租约机制 (Token Leasing via Lua)
-- **Pre-flight 原子租约预占**：由于大模型实际生成 Token 数量事先不可知，请求进入时先原子预扣冻结 Token（`frozen_tokens`），防止多 Pod 并发涌入击穿额度；
+### 2.1 三层 Token 租约机制 (Token Leasing)
+- **Pre-flight 原子租约预占**：由于大模型实际生成 Token 数量事先不可知，请求进入时先原子预扣冻结 Token（`frozen_tokens`），防止并发涌入击穿额度；
 - **Post-flight 差额核销**：请求结束后，释放预占额度并记入实耗量；
-- **零运维自动日切**：Redis Key 采用 `tenant:{id}:quota:yyyyMMdd` 自动日切设计，次日自然从 0 计数，免去全量清零定时 Job 的隐患。
+- **零运维自动日切**：配额 Key 按 `tenant:{id}:quota:yyyyMMdd` 组织，次日自然从 0 计数，免去全量清零定时 Job 的隐患；
+- **实现现状**：当前 `QuotaStorageEngine` 为进程内 `InMemoryQuotaStorageEngine`（CAS 原子预占），`DistributedLuaQuotaEngine` 是**进程内模拟** Redis Lua 的实现，仓库尚未引入 Redis 客户端依赖。多 Pod 部署需要真正的跨实例原子性时，须先接入 Redis 适配器。
 
 ### 2.2 异步削峰写回批处理器 (`AsyncQuotaWriteBehindBatcher`)
 - **消除数据库热行行锁冲突**：大并发下（如数千 QPS），同一租户的并发请求若直接执行 `UPDATE tenants SET used_tokens = used_tokens + ?` 会导致行级锁竞争激烈与数据库卡死；
@@ -86,7 +87,7 @@
 ### 4.1 入站提示词注入检测 (`PromptGuardrailService`)
 - 内置针对 Jailbreak、DAN 越狱指令、指令覆盖、系统提示词嗅探等高危模式的规则防御引擎，毫秒级就地拦截恶意 Payload。
 
-### 4.2 出站流式跨 Chunk 环形滑动窗口敏感词拦截 (`StreamingOutputGuardrail`)
+### 4.2 出站流式跨 Chunk 尾部分片扣留敏感词拦截 (`StreamingOutputGuardrail`)
 - 维护重叠字符环形窗口，精准识别被 SSE 打字机分片截断的手机号、身份证、银行卡或 `sk-...` API Key；
 - 支持 `BLOCK` 模式（立即中断 SSE 发送并审计打点）与 `MASK` 模式（行内脱敏替换）。
 
@@ -181,6 +182,8 @@
 ### 10.3 Prometheus / Micrometer 企业级度量体系
 - 原生暴露 `/actuator/prometheus` 端点，采集 QPS、TTFT、TPS、Token 消耗分布、熔断器状态等核心指标。
 
-### 10.4 零外部依赖的内嵌现代 Web 运维监控大盘
-- 纯本地内嵌静态控制台，无需联网加载外部 CDN，开箱即用；
-- 实时可视化展示租户用量、分钟级请求曲线、L1/L2 缓存命中率与 Agent 任务状态机。
+### 10.4 内嵌 Web 运维监控大盘
+- 静态控制台由网关自身托管（`src/main/resources/static/index.html`），**无需独立前端构建**；
+- 注意：Tailwind CSS 与 ECharts 通过公网 CDN（`cdn.tailwindcss.com` / `jsdelivr`）加载，**完全离线环境下看板样式与图表不可用**，但网关 API 不受影响；
+- 实时可视化展示租户用量、分钟级请求曲线、L1/L2 缓存命中率与 Agent 任务状态机；
+- 看板需要手工输入 `ADMIN_SECRET_KEY`（对应 `admin.secret-key`），仓库内不再内置默认密钥。

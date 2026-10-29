@@ -1,15 +1,24 @@
 package com.enterprise.llm.admin;
 
+import java.util.List;
+import java.util.Map;
+import com.enterprise.llm.metrics.MetricsRecordService;
 import com.enterprise.llm.tenant.TenantEntity;
 import com.enterprise.llm.tenant.TenantRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
-import java.util.Map;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/v1/admin")
@@ -18,27 +27,19 @@ public class AdminController {
     private final AdminProperties adminProperties;
     private final TenantRepository tenantRepository;
     private final AnalyticsService analyticsService;
-    private final com.enterprise.llm.metrics.MetricsRecordService metricsRecordService;
+    private final MetricsRecordService metricsRecordService;
 
     @Autowired
     public AdminController(
             AdminProperties adminProperties,
             TenantRepository tenantRepository,
             AnalyticsService analyticsService,
-            @Autowired(required = false) com.enterprise.llm.metrics.MetricsRecordService metricsRecordService
+            @Autowired(required = false) MetricsRecordService metricsRecordService
     ) {
         this.adminProperties = adminProperties;
         this.tenantRepository = tenantRepository;
         this.analyticsService = analyticsService;
         this.metricsRecordService = metricsRecordService;
-    }
-
-    public AdminController(
-            AdminProperties adminProperties,
-            TenantRepository tenantRepository,
-            AnalyticsService analyticsService
-    ) {
-        this(adminProperties, tenantRepository, analyticsService, null);
     }
 
     private ResponseEntity<?> verifyAdminKey(String adminKey) {

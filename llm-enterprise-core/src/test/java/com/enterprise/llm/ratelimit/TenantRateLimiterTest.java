@@ -1,12 +1,8 @@
 package com.enterprise.llm.ratelimit;
 
-import com.enterprise.llm.auth.TenantSecurityContext;
 import com.enterprise.llm.tenant.TenantEntity;
-import com.enterprise.llm.tenant.TenantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

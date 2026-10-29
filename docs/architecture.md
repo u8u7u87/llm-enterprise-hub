@@ -44,7 +44,7 @@ flowchart TD
     end
 
     subgraph S4["4. 出口安全与可观测监控层 (Egress, Safety & Observability)"]
-        StreamingDLP["StreamingOutputGuardrail<br>(跨 Chunk 环形滑动窗口隐私敏感词拦截)"]
+        StreamingDLP["StreamingOutputGuardrail<br>(跨 Chunk 尾部分片扣留隐私敏感词拦截)"]
         DeMasking["PrivacyDeMaskingTransformer<br>(双向隐私脱敏保险库透明反脱敏还原)"]
         Faithfulness["RagFaithfulnessEvaluator<br>(事实忠实度评估与幻觉主动防御门禁)"]
         CostCalc["CostCalculator<br>(官方费率匹配与微美元精细核算)"]
@@ -95,10 +95,10 @@ llm-enterprise-hub/
   - `router/canary/`：Canary 灰度切流引擎与粘性会话一致性哈希 (`CanaryRoutingService`, `CanaryRule`)；
   - `router/shadow/`：生产级异步影子流量镜像与对照审计 (`ShadowTrafficMirror`, `ShadowComparisonRecord`)；
   - `cluster/`：远程 GPU 集群拓扑自感知 SPI (`ClusterDiscoveryProvider`)、显存与前缀缓存哈希负载均衡 (`ClusterLoadBalancer`)、多 Key 轮转凭据池 (`ApiKeyPool`)；
-  - `quota/`：租户配额治理服务 (`TenantQuotaService`)、无锁 CAS 预占与 Redis Lua 租约引擎 (`QuotaStorageEngine`, `DistributedLuaQuotaEngine`)、异步削峰写回批处理器 (`AsyncQuotaWriteBehindBatcher`)；
+  - `quota/`：租户配额治理服务 (`TenantQuotaService`)、无锁 CAS 预占 (`QuotaStorageEngine` / `InMemoryQuotaStorageEngine`)、进程内模拟 Lua 租约的 `DistributedLuaQuotaEngine`（**Redis 客户端尚未接入**）、异步削峰写回批处理器 (`AsyncQuotaWriteBehindBatcher`)；
   - `ratelimit/`：QPS 令牌桶 (`TenantRateLimiter`)、毫秒槽双轨滑动窗口 (`SlidingWindowRateLimiter`)、带本地熔断降级的分布式限流器 (`DistributedRateLimiter`)；
   - `cost/`：企业级模型费率注册表 (`ModelPricingRegistry`)、微美元成本核算器 (`CostCalculator`)、租户财务预算管理器 (`TenantBudgetManager`)；
-  - `guard/`：入站提示词注入防御 (`PromptGuardrailService`)、出站正则数据脱敏 (`OutputGuardrailService`)、流式跨 Chunk 环形滑动窗口拦截器 (`StreamingOutputGuardrail`)、双向脱敏隐私保险库 (`PrivacyVault`)、工具越权动作守门员 (`ToolActionGatekeeper`)；
+  - `guard/`：入站提示词注入防御 (`PromptGuardrailService`)、出站正则数据脱敏 (`OutputGuardrailService`)、流式跨 Chunk **尾部分片扣留**拦截器 (`StreamingOutputGuardrail`，先掩码后切分)、双向脱敏隐私保险库 (`PrivacyVault` / `PrivacyMaskingService` / `PrivacyDeMaskingTransformer`，默认关闭)、工具越权动作守门员 (`ToolActionGatekeeper`)；
   - `cache/`：L1 Exact Hash 精准匹配 + L2 稠密向量余弦相似度语义缓存引擎 (`CacheEngine`, `CacheEntry`)；
   - `agent/`：ReAct 循环工具调度器 (`AgentToolOrchestrator`)、流式智能体生命周期中间事件透传 (`StreamingAgentOrchestrator`)、多 Agent 协同分诊工作流 (`AgentSwarmOrchestrator`)、长程状态机与检查点恢复 (`AgentTaskManager`)；
   - `rag/`：前置 RAG 检索增强服务 (`RagPipelineService`)、Markdown 章节层级分块器 (`MarkdownStructureChunker`)、多轮指代消解 Query 改写器 (`ContextualQueryRewriter`)、混合检索重排序器 (`HybridSearchReranker`)、事实忠实度评估防御 (`RagFaithfulnessEvaluator`)；
@@ -118,7 +118,7 @@ llm-enterprise-hub/
 - **包含组件**：
   - OpenAI 兼容的 HTTP 接入端点 (`ChatCompletionController`)；
   - SQLite WAL 模式轻量持久化与元数据仓储 (`TenantRepository`, `SqliteSessionStorageProvider`, `SqliteAgentTaskStorageProvider`)；
-  - 内嵌现代 Web 运维大盘控制台（静态资源零外部 CDN 依赖，Tailwind CSS + ECharts 实时渲染）；
+  - 内嵌 Web 运维大盘控制台（静态资源由网关托管，Tailwind CSS 与 ECharts 经公网 CDN 加载；离线环境仅影响看板样式与图表，不影响网关 API）；
   - 租户管理与运营大盘 REST API (`AdminController`, `KnowledgeBaseController`, `AgentTaskController`, `SessionController`)。
 
 ### 4. `samples/sample-business-app` (业务示例模块)
@@ -165,7 +165,7 @@ sequenceDiagram
         end
         
         LLM-->>Post: 实时输出流式 Chunk
-        Post->>Post: 跨 Chunk 环形滑动窗口敏感数据脱敏/拦截
+        Post->>Post: 跨 Chunk 尾部分片扣留敏感数据脱敏/拦截
         Post-->>Client: 最终打字机 SSE 推送 (data: {...})
         
         Post->>Quota: 结算差额 (释放预冻结，上报实际 Token)

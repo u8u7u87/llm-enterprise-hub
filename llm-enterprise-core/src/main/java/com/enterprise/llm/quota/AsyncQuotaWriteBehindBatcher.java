@@ -1,15 +1,17 @@
 package com.enterprise.llm.quota;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.LongAdder;
 import com.enterprise.llm.tenant.TenantStorageProvider;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.LongAdder;
 
 /**
  * High-throughput, write-behind asynchronous batcher for tenant token quota reconciliation.
@@ -36,11 +38,8 @@ public class AsyncQuotaWriteBehindBatcher implements AutoCloseable {
         this.flushIntervalMs = Math.max(50, flushIntervalMs);
         this.batchSizeThreshold = Math.max(10, batchSizeThreshold);
 
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "quota-write-behind-flusher");
-            t.setDaemon(true);
-            return t;
-        });
+        this.scheduler = Executors.newSingleThreadScheduledExecutor(
+                Thread.ofPlatform().daemon().name("quota-write-behind-flusher").factory());
 
         this.scheduler.scheduleWithFixedDelay(
                 this::safeFlush,

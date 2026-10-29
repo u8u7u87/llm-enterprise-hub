@@ -1,11 +1,15 @@
 package com.enterprise.llm.auth;
 
+import java.util.List;
 import com.enterprise.llm.client.LlmClient;
 import com.enterprise.llm.model.ChatCompletionResponse;
 import com.enterprise.llm.model.ChatMessage;
 import com.enterprise.llm.model.Usage;
+import com.enterprise.llm.tenant.TenantEntity;
+import com.enterprise.llm.tenant.TenantService;
 import com.enterprise.llm.trace.LlmSpan;
 import com.enterprise.llm.trace.TraceCollector;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -15,9 +19,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -35,14 +36,14 @@ class TraceFilterAndMdcIntegrationTest {
     private TraceCollector traceCollector;
 
     @Autowired
-    private com.enterprise.llm.tenant.TenantService tenantService;
+    private TenantService tenantService;
 
     @MockBean(name = "primaryLlmClient")
     private LlmClient primaryLlmClient;
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void setUp() {
-        tenantService.registerTenant(new com.enterprise.llm.tenant.TenantEntity(
+        tenantService.registerTenant(new TenantEntity(
                 "tenant-alpha",
                 "Tenant Alpha",
                 "sk-alpha-secret",

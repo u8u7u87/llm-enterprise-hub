@@ -1,22 +1,43 @@
 package com.enterprise.llm.starter;
 
+import java.util.ArrayList;
 import java.util.List;
 import com.enterprise.llm.agent.AgentToolOrchestrator;
+import com.enterprise.llm.agent.StreamingAgentOrchestrator;
 import com.enterprise.llm.agent.ToolRegistry;
 import com.enterprise.llm.agent.annotation.LlmToolBeanPostProcessor;
+import com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator;
 import com.enterprise.llm.agent.task.AgentTaskManager;
 import com.enterprise.llm.agent.task.AgentTaskStorageProvider;
 import com.enterprise.llm.agent.task.InMemoryAgentTaskStorageProvider;
+import com.enterprise.llm.backend.InferenceBackendAdapter;
+import com.enterprise.llm.backend.InferenceBackendProperties;
+import com.enterprise.llm.backend.InferenceBackendRegistry;
+import com.enterprise.llm.backend.adapter.DirectInferenceAdapter;
+import com.enterprise.llm.backend.adapter.RayServeInferenceAdapter;
+import com.enterprise.llm.backend.adapter.SglangInferenceAdapter;
+import com.enterprise.llm.backend.adapter.TritonInferenceAdapter;
+import com.enterprise.llm.backend.adapter.VllmInferenceAdapter;
 import com.enterprise.llm.cache.CacheEngine;
 import com.enterprise.llm.cache.CacheProperties;
 import com.enterprise.llm.client.LlmClient;
+import com.enterprise.llm.cluster.RemoteClusterManager;
+import com.enterprise.llm.cluster.discovery.DnsClusterDiscoveryProvider;
+import com.enterprise.llm.cluster.discovery.ModelCatalogDiscoveryProvider;
+import com.enterprise.llm.cluster.discovery.StaticClusterDiscoveryProvider;
+import com.enterprise.llm.cluster.lb.ClusterLoadBalancer;
+import com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer;
 import com.enterprise.llm.config.LlmConfiguration;
 import com.enterprise.llm.context.ContextBudgetProperties;
 import com.enterprise.llm.context.ContextDistiller;
 import com.enterprise.llm.context.ContextManager;
 import com.enterprise.llm.context.HeuristicContextDistiller;
+import com.enterprise.llm.cost.CostCalculator;
+import com.enterprise.llm.cost.ModelPricingRegistry;
+import com.enterprise.llm.cost.TenantBudgetManager;
 import com.enterprise.llm.guard.OutputGuardrailService;
 import com.enterprise.llm.guard.PromptGuardrailService;
+import com.enterprise.llm.guard.StreamingOutputGuardrail;
 import com.enterprise.llm.guard.ToolActionGatekeeper;
 import com.enterprise.llm.guard.dlp.DlpPolicyProperties;
 import com.enterprise.llm.guard.dlp.DlpRuleProvider;
@@ -27,38 +48,53 @@ import com.enterprise.llm.guard.prompt.PropertiesPromptRuleProvider;
 import com.enterprise.llm.guard.tool.PropertiesToolPolicyProvider;
 import com.enterprise.llm.guard.tool.ToolPolicyProperties;
 import com.enterprise.llm.guard.tool.ToolPolicyProvider;
+import com.enterprise.llm.memory.WorkingMemoryManager;
+import com.enterprise.llm.metrics.LlmMetricsCollector;
+import com.enterprise.llm.metrics.NoOpMetricsCollector;
 import com.enterprise.llm.quota.AsyncQuotaWriteBehindBatcher;
 import com.enterprise.llm.quota.InMemoryQuotaStorageEngine;
 import com.enterprise.llm.quota.QuotaStorageEngine;
 import com.enterprise.llm.quota.TenantQuotaService;
-import com.enterprise.llm.ratelimit.DistributedRateLimiter;
-import com.enterprise.llm.resilience.AdaptiveJitteredRetryPolicy;
-import com.enterprise.llm.router.canary.CanaryRoutingService;
-import com.enterprise.llm.router.shadow.ShadowTrafficMirror;
-import com.enterprise.llm.template.PromptTemplateRegistry;
-import com.enterprise.llm.rag.PromptAugmentor;
 import com.enterprise.llm.rag.RagPipelineService;
 import com.enterprise.llm.rag.embedding.EmbeddingClient;
+import com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator;
+import com.enterprise.llm.rag.query.QueryRewriter;
+import com.enterprise.llm.rag.rerank.Reranker;
 import com.enterprise.llm.rag.store.MilvusVectorStore;
 import com.enterprise.llm.rag.store.VectorStore;
+import com.enterprise.llm.ratelimit.DistributedRateLimiter;
 import com.enterprise.llm.ratelimit.TenantRateLimiter;
+import com.enterprise.llm.resilience.AdaptiveJitteredRetryPolicy;
+import com.enterprise.llm.resilience.CircuitBreaker;
 import com.enterprise.llm.router.FailoverRoutingService;
+import com.enterprise.llm.router.ModelAliasRegistry;
+import com.enterprise.llm.router.canary.CanaryRoutingService;
+import com.enterprise.llm.router.canary.CanaryRule;
+import com.enterprise.llm.router.shadow.ShadowTrafficMirror;
+import com.enterprise.llm.router.shadow.ShadowTrafficRule;
+import com.enterprise.llm.runner.EmbeddedLocalEngineSupervisor;
+import com.enterprise.llm.runner.EmbeddedRunnerProperties;
+import com.enterprise.llm.session.InMemorySessionStorageProvider;
+import com.enterprise.llm.session.SessionManager;
+import com.enterprise.llm.session.SessionStorageProvider;
+import com.enterprise.llm.starter.config.LlmCanaryProperties;
+import com.enterprise.llm.starter.config.LlmPrivacyProperties;
+import com.enterprise.llm.starter.config.LlmShadowProperties;
+import com.enterprise.llm.starter.metrics.MicrometerLlmMetricsCollector;
+import com.enterprise.llm.template.PromptTemplateRegistry;
 import com.enterprise.llm.tenant.InMemoryTenantStorageProvider;
 import com.enterprise.llm.tenant.TenantService;
 import com.enterprise.llm.tenant.TenantStorageProvider;
 import com.enterprise.llm.token.TokenEstimator;
 import com.enterprise.llm.trace.LangfuseTraceExporter;
-import com.enterprise.llm.backend.InferenceBackendAdapter;
-import com.enterprise.llm.backend.InferenceBackendProperties;
-import com.enterprise.llm.backend.InferenceBackendRegistry;
-import com.enterprise.llm.backend.adapter.*;
-import com.enterprise.llm.runner.EmbeddedLocalEngineSupervisor;
-import com.enterprise.llm.runner.EmbeddedRunnerProperties;
 import com.enterprise.llm.trace.TraceCollector;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -74,7 +110,10 @@ import org.springframework.context.annotation.Import;
         DlpPolicyProperties.class,
         ToolPolicyProperties.class,
         InferenceBackendProperties.class,
-        EmbeddedRunnerProperties.class
+        EmbeddedRunnerProperties.class,
+        LlmCanaryProperties.class,
+        LlmShadowProperties.class,
+        LlmPrivacyProperties.class
 })
 public class LlmAutoConfiguration {
 
@@ -91,9 +130,9 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.memory.WorkingMemoryManager.class)
-    public com.enterprise.llm.memory.WorkingMemoryManager workingMemoryManager(ObjectProvider<EmbeddingClient> embeddingClientProvider) {
-        return new com.enterprise.llm.memory.WorkingMemoryManager(embeddingClientProvider.getIfAvailable());
+    @ConditionalOnMissingBean(WorkingMemoryManager.class)
+    public WorkingMemoryManager workingMemoryManager(ObjectProvider<EmbeddingClient> embeddingClientProvider) {
+        return new WorkingMemoryManager(embeddingClientProvider.getIfAvailable());
     }
 
     @Bean
@@ -102,7 +141,7 @@ public class LlmAutoConfiguration {
             ContextBudgetProperties properties,
             TokenEstimator tokenEstimator,
             ContextDistiller contextDistiller,
-            ObjectProvider<com.enterprise.llm.memory.WorkingMemoryManager> workingMemoryManagerProvider
+            ObjectProvider<WorkingMemoryManager> workingMemoryManagerProvider
     ) {
         return new ContextManager(properties, tokenEstimator, contextDistiller, workingMemoryManagerProvider.getIfAvailable());
     }
@@ -153,37 +192,37 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.cluster.RemoteClusterManager.class)
-    public com.enterprise.llm.cluster.RemoteClusterManager remoteClusterManager(
+    @ConditionalOnMissingBean(RemoteClusterManager.class)
+    public RemoteClusterManager remoteClusterManager(
             @Value("${llm.cluster.enabled:false}") boolean clusterEnabled,
             @Value("${llm.cluster.dns-discovery:}") String dnsDiscovery,
             @Value("${llm.cluster.static-nodes:}") String staticNodes,
             @Value("${llm.cluster.discovery-interval-seconds:15}") long discoveryInterval,
-            ObjectProvider<com.enterprise.llm.cluster.lb.ClusterLoadBalancer> lbProvider,
+            ObjectProvider<ClusterLoadBalancer> lbProvider,
             InferenceBackendRegistry backendRegistry
     ) {
         if (!clusterEnabled && (dnsDiscovery == null || dnsDiscovery.isBlank()) && (staticNodes == null || staticNodes.isBlank())) {
             return null;
         }
 
-        com.enterprise.llm.cluster.lb.ClusterLoadBalancer lb = lbProvider.getIfAvailable(() ->
-                backendRegistry != null ? backendRegistry.getDefaultAdapter().createDefaultLoadBalancer() : new com.enterprise.llm.cluster.lb.LeastRequestsLoadBalancer()
+        ClusterLoadBalancer lb = lbProvider.getIfAvailable(() ->
+                backendRegistry != null ? backendRegistry.getDefaultAdapter().createDefaultLoadBalancer() : new LeastRequestsLoadBalancer()
         );
-        com.enterprise.llm.cluster.RemoteClusterManager manager = new com.enterprise.llm.cluster.RemoteClusterManager(
-                new java.util.ArrayList<>(), lb, null, backendRegistry
+        RemoteClusterManager manager = new RemoteClusterManager(
+                new ArrayList<>(), lb, null, backendRegistry
         );
 
         if (dnsDiscovery != null && !dnsDiscovery.isBlank()) {
-            manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.DnsClusterDiscoveryProvider());
+            manager.registerDiscoveryProvider(new DnsClusterDiscoveryProvider());
             manager.addDiscoveryTarget(dnsDiscovery);
         }
         if (staticNodes != null && !staticNodes.isBlank()) {
-            manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.StaticClusterDiscoveryProvider());
+            manager.registerDiscoveryProvider(new StaticClusterDiscoveryProvider());
             manager.addDiscoveryTarget(staticNodes);
         }
 
         // Always register ModelCatalogDiscoveryProvider for automatic introspection
-        manager.registerDiscoveryProvider(new com.enterprise.llm.cluster.discovery.ModelCatalogDiscoveryProvider());
+        manager.registerDiscoveryProvider(new ModelCatalogDiscoveryProvider());
 
         if (discoveryInterval > 0) {
             manager.startScheduledDiscovery(discoveryInterval);
@@ -201,9 +240,9 @@ public class LlmAutoConfiguration {
             @Qualifier("fallbackLlmClient") LlmClient fallbackClient,
             @Value("${llm.fallback.model:qwen2.5:0.5b}") String fallbackModel,
             ObjectProvider<ContextManager> contextManagerProvider,
-            ObjectProvider<com.enterprise.llm.resilience.CircuitBreaker> circuitBreakerProvider,
-            ObjectProvider<com.enterprise.llm.cluster.RemoteClusterManager> clusterManagerProvider,
-            ObjectProvider<com.enterprise.llm.router.ModelAliasRegistry> modelAliasRegistryProvider
+            ObjectProvider<CircuitBreaker> circuitBreakerProvider,
+            ObjectProvider<RemoteClusterManager> clusterManagerProvider,
+            ObjectProvider<ModelAliasRegistry> modelAliasRegistryProvider
     ) {
         return new FailoverRoutingService(
                 primaryClient,
@@ -284,6 +323,61 @@ public class LlmAutoConfiguration {
         return new ShadowTrafficMirror();
     }
 
+    /**
+     * Applies {@code llm.canary} / {@code llm.shadow} rules to whichever routing beans ended up in
+     * the context. Both classes are annotated with {@code @Service} / {@code @Component}, so in an
+     * application that component-scans {@code com.enterprise.llm} the beans above back off; a
+     * post-instantiation hook is therefore the only place that is guaranteed to see the real bean.
+     */
+    @Bean
+    public SmartInitializingSingleton llmTrafficRuleApplier(
+            ObjectProvider<CanaryRoutingService> canaryProvider,
+            ObjectProvider<ShadowTrafficMirror> shadowProvider,
+            LlmCanaryProperties canaryProperties,
+            LlmShadowProperties shadowProperties) {
+        return () -> {
+            canaryProvider.ifAvailable(service -> applyCanaryRules(service, canaryProperties));
+            shadowProvider.ifAvailable(mirror -> applyShadowRules(mirror, shadowProperties));
+        };
+    }
+
+    private static void applyCanaryRules(CanaryRoutingService service,
+                                         LlmCanaryProperties properties) {
+        if (properties == null || !properties.isEnabled()) {
+            return;
+        }
+        for (LlmCanaryProperties.Rule rule : properties.getRules()) {
+            if (rule.getBaseModel() == null || rule.getCanaryModel() == null) {
+                continue;
+            }
+            service.setRule(new CanaryRule(
+                    rule.getBaseModel(),
+                    rule.getCanaryModel(),
+                    rule.getWeightPercent(),
+                    rule.isStickyByTenant(),
+                    rule.isStickyBySession()));
+        }
+        for (LlmCanaryProperties.TenantOverride override : properties.getOverrides()) {
+            service.setTenantOverride(override.getTenantId(), override.getBaseModel(), override.getTargetModel());
+        }
+    }
+
+    private static void applyShadowRules(ShadowTrafficMirror mirror,
+                                         LlmShadowProperties properties) {
+        if (properties == null || !properties.isEnabled()) {
+            return;
+        }
+        for (LlmShadowProperties.Rule rule : properties.getRules()) {
+            if (rule.getSourceModel() == null || rule.getShadowModel() == null) {
+                continue;
+            }
+            mirror.setRule(new ShadowTrafficRule(
+                    rule.getSourceModel(),
+                    rule.getShadowModel(),
+                    rule.getSampleRatio()));
+        }
+    }
+
     @Bean
     @ConditionalOnMissingBean(PromptTemplateRegistry.class)
     public PromptTemplateRegistry promptTemplateRegistry() {
@@ -333,22 +427,22 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.metrics.LlmMetricsCollector.class)
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
-    public com.enterprise.llm.metrics.LlmMetricsCollector micrometerLlmMetricsCollector(
-            ObjectProvider<io.micrometer.core.instrument.MeterRegistry> meterRegistryProvider
+    @ConditionalOnMissingBean(LlmMetricsCollector.class)
+    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    public LlmMetricsCollector micrometerLlmMetricsCollector(
+            ObjectProvider<MeterRegistry> meterRegistryProvider
     ) {
-        io.micrometer.core.instrument.MeterRegistry registry = meterRegistryProvider.getIfAvailable();
+        MeterRegistry registry = meterRegistryProvider.getIfAvailable();
         if (registry != null) {
-            return new com.enterprise.llm.starter.metrics.MicrometerLlmMetricsCollector(registry);
+            return new MicrometerLlmMetricsCollector(registry);
         }
-        return com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
+        return NoOpMetricsCollector.INSTANCE;
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.metrics.LlmMetricsCollector.class)
-    public com.enterprise.llm.metrics.LlmMetricsCollector noOpLlmMetricsCollector() {
-        return com.enterprise.llm.metrics.NoOpMetricsCollector.INSTANCE;
+    @ConditionalOnMissingBean(LlmMetricsCollector.class)
+    public LlmMetricsCollector noOpLlmMetricsCollector() {
+        return NoOpMetricsCollector.INSTANCE;
     }
 
     @Bean
@@ -356,7 +450,7 @@ public class LlmAutoConfiguration {
     public AgentToolOrchestrator agentToolOrchestrator(
             ToolRegistry toolRegistry,
             ObjectProvider<ToolActionGatekeeper> gatekeeperProvider,
-            ObjectProvider<com.enterprise.llm.metrics.LlmMetricsCollector> metricsCollectorProvider
+            ObjectProvider<LlmMetricsCollector> metricsCollectorProvider
     ) {
         AgentToolOrchestrator orchestrator = new AgentToolOrchestrator(toolRegistry, gatekeeperProvider.getIfAvailable());
         if (metricsCollectorProvider.getIfAvailable() != null) {
@@ -366,17 +460,17 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.agent.StreamingAgentOrchestrator.class)
-    public com.enterprise.llm.agent.StreamingAgentOrchestrator streamingAgentOrchestrator(
+    @ConditionalOnMissingBean(StreamingAgentOrchestrator.class)
+    public StreamingAgentOrchestrator streamingAgentOrchestrator(
             AgentToolOrchestrator agentToolOrchestrator
     ) {
-        return new com.enterprise.llm.agent.StreamingAgentOrchestrator(agentToolOrchestrator);
+        return new StreamingAgentOrchestrator(agentToolOrchestrator);
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator.class)
-    public com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator agentSwarmOrchestrator() {
-        return new com.enterprise.llm.agent.swarm.AgentSwarmOrchestrator();
+    @ConditionalOnMissingBean(AgentSwarmOrchestrator.class)
+    public AgentSwarmOrchestrator agentSwarmOrchestrator() {
+        return new AgentSwarmOrchestrator();
     }
 
     @Bean
@@ -399,7 +493,7 @@ public class LlmAutoConfiguration {
     @ConditionalOnMissingBean(CacheEngine.class)
     public CacheEngine cacheEngine(
             CacheProperties properties,
-            ObjectProvider<com.enterprise.llm.rag.embedding.EmbeddingClient> embeddingClientProvider
+            ObjectProvider<EmbeddingClient> embeddingClientProvider
     ) {
         return new CacheEngine(properties, embeddingClientProvider.getIfAvailable());
     }
@@ -415,12 +509,12 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator.class)
-    public com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator ragFaithfulnessEvaluator(
+    @ConditionalOnMissingBean(RagFaithfulnessEvaluator.class)
+    public RagFaithfulnessEvaluator ragFaithfulnessEvaluator(
             @Value("${rag.guardrail.pass-threshold:0.65}") double passThreshold,
             @Value("${rag.guardrail.warn-threshold:0.40}") double warnThreshold
     ) {
-        return new com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator(passThreshold, warnThreshold);
+        return new RagFaithfulnessEvaluator(passThreshold, warnThreshold);
     }
 
     @Bean
@@ -428,9 +522,9 @@ public class LlmAutoConfiguration {
     public RagPipelineService ragPipelineService(
             ObjectProvider<EmbeddingClient> embeddingClientProvider,
             ObjectProvider<VectorStore> vectorStoreProvider,
-            ObjectProvider<com.enterprise.llm.rag.query.QueryRewriter> queryRewriterProvider,
-            ObjectProvider<com.enterprise.llm.rag.rerank.Reranker> rerankerProvider,
-            ObjectProvider<com.enterprise.llm.rag.guard.RagFaithfulnessEvaluator> faithfulnessEvaluatorProvider,
+            ObjectProvider<QueryRewriter> queryRewriterProvider,
+            ObjectProvider<Reranker> rerankerProvider,
+            ObjectProvider<RagFaithfulnessEvaluator> faithfulnessEvaluatorProvider,
             @Value("${rag.enabled:true}") boolean ragEnabled,
             @Value("${rag.top-k:3}") int topK,
             @Value("${rag.min-score:0.5}") double minScore
@@ -460,52 +554,52 @@ public class LlmAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.session.SessionStorageProvider.class)
-    public com.enterprise.llm.session.SessionStorageProvider sessionStorageProvider() {
-        return new com.enterprise.llm.session.InMemorySessionStorageProvider();
+    @ConditionalOnMissingBean(SessionStorageProvider.class)
+    public SessionStorageProvider sessionStorageProvider() {
+        return new InMemorySessionStorageProvider();
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.session.SessionManager.class)
-    public com.enterprise.llm.session.SessionManager sessionManager(com.enterprise.llm.session.SessionStorageProvider sessionStorageProvider) {
-        return new com.enterprise.llm.session.SessionManager(sessionStorageProvider);
+    @ConditionalOnMissingBean(SessionManager.class)
+    public SessionManager sessionManager(SessionStorageProvider sessionStorageProvider) {
+        return new SessionManager(sessionStorageProvider);
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.router.ModelAliasRegistry.class)
-    public com.enterprise.llm.router.ModelAliasRegistry modelAliasRegistry() {
-        return new com.enterprise.llm.router.ModelAliasRegistry();
+    @ConditionalOnMissingBean(ModelAliasRegistry.class)
+    public ModelAliasRegistry modelAliasRegistry() {
+        return new ModelAliasRegistry();
     }
 
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.cost.ModelPricingRegistry.class)
-    public com.enterprise.llm.cost.ModelPricingRegistry modelPricingRegistry() {
-        return new com.enterprise.llm.cost.ModelPricingRegistry();
+    @ConditionalOnMissingBean(ModelPricingRegistry.class)
+    public ModelPricingRegistry modelPricingRegistry() {
+        return new ModelPricingRegistry();
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.cost.CostCalculator.class)
-    public com.enterprise.llm.cost.CostCalculator costCalculator(ObjectProvider<com.enterprise.llm.cost.ModelPricingRegistry> pricingRegistryProvider) {
-        return new com.enterprise.llm.cost.CostCalculator(pricingRegistryProvider.getIfAvailable(com.enterprise.llm.cost.ModelPricingRegistry::new));
+    @ConditionalOnMissingBean(CostCalculator.class)
+    public CostCalculator costCalculator(ObjectProvider<ModelPricingRegistry> pricingRegistryProvider) {
+        return new CostCalculator(pricingRegistryProvider.getIfAvailable(ModelPricingRegistry::new));
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.cost.TenantBudgetManager.class)
-    public com.enterprise.llm.cost.TenantBudgetManager tenantBudgetManager() {
-        return new com.enterprise.llm.cost.TenantBudgetManager();
+    @ConditionalOnMissingBean(TenantBudgetManager.class)
+    public TenantBudgetManager tenantBudgetManager() {
+        return new TenantBudgetManager();
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.enterprise.llm.guard.StreamingOutputGuardrail.class)
-    public com.enterprise.llm.guard.StreamingOutputGuardrail streamingOutputGuardrail(
+    @ConditionalOnMissingBean(StreamingOutputGuardrail.class)
+    public StreamingOutputGuardrail streamingOutputGuardrail(
             @Value("${llm.guardrail.streaming.mode:BLOCK}") String modeStr,
             @Value("${llm.guardrail.streaming.overlap-size:64}") int overlapSize
     ) {
-        com.enterprise.llm.guard.StreamingOutputGuardrail.Mode mode = "MASK".equalsIgnoreCase(modeStr)
-                ? com.enterprise.llm.guard.StreamingOutputGuardrail.Mode.MASK
-                : com.enterprise.llm.guard.StreamingOutputGuardrail.Mode.BLOCK;
-        return new com.enterprise.llm.guard.StreamingOutputGuardrail(mode, overlapSize);
+        StreamingOutputGuardrail.Mode mode = "MASK".equalsIgnoreCase(modeStr)
+                ? StreamingOutputGuardrail.Mode.MASK
+                : StreamingOutputGuardrail.Mode.BLOCK;
+        return new StreamingOutputGuardrail(mode, overlapSize);
     }
 }
 

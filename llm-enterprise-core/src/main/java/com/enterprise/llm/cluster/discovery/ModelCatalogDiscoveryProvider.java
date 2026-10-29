@@ -314,7 +314,8 @@ public class ModelCatalogDiscoveryProvider implements ClusterDiscoveryProvider {
             if (host != null && !host.isBlank()) {
                 return "catalog-" + host + (port > 0 ? ":" + port : "");
             }
-        } catch (Exception ignored) {
+        } catch (IllegalArgumentException e) {
+            // 配置里可能出现占位符或非标准 URL，解析失败时退化为按字符串净化生成稳定 ID
         }
         return "catalog-" + normalizedUrl.replaceAll("[^a-zA-Z0-9.-]", "_");
     }
